@@ -1,4 +1,7 @@
-# Anomaly detection in time series and signals by denoising
+# Anomaly detection in time series by data denoising
+This project aims to apply various denoising techniques to identify anomalies in
+various forms of time series, e.g. in vibrations, medical or radio signals.
+
 ## Files
 This repository consists of the following groups of notebooks:
 
