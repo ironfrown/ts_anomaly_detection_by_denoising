@@ -2,6 +2,11 @@
 This project aims to apply various denoising techniques to identify anomalies in
 various forms of time series, e.g. in vibrations, medical or radio signals.
 
+## Status
+The current work is summarised here:
+
+- **qiskit_qae/ts_qiskit_qae_v1_0**: TS QAE based on binary encoding of TS windows developed and tested, results are not promising.
+
 ## Files
 This repository consists of the following groups of notebooks:
 
