@@ -6,6 +6,7 @@ various forms of time series, e.g. in vibrations, medical or radio signals.
 The current work is summarised here:
 
 - **qiskit_qae/ts_qiskit_qae_v1_0**: TS QAE based on binary encoding of TS windows developed and tested, results are not promising.
+- **qiskit_qae/ts_qiskit_qae_v2_0**: TS QAE based on unary encoding of TS windows developed and tested, results are promising.
 
 ## Files
 This repository consists of the following groups of notebooks:
