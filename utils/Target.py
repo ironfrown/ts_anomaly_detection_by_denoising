@@ -7,7 +7,6 @@ import numpy as np
 import pylab
 import math
 from IPython.display import clear_output
-from qiskit.utils import algorithm_globals
 
 
 ##### Defines several target functions for testing
@@ -106,7 +105,6 @@ class Target_line(Target):
 
     def __init__(self, slope=0.1, intercept=0.5, xmin=-2.0, xmax=+2.0):
         super().__init__()
-        # algorithm_globals.random_seed = np.abs(int(slope+intercept*(xmax-xmin)*100))
         self.xmin = xmin
         self.xmax = xmax
         self.slope = slope

@@ -8,7 +8,6 @@ import pylab
 import math
 from typing import Union
 from IPython.display import clear_output
-from qiskit.utils import algorithm_globals
 
 
 ##### Reshape data to allow windowing
