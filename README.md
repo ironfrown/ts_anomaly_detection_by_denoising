@@ -5,18 +5,21 @@ various forms of time series, e.g. in vibrations, medical or radio signals.
 ## Status
 The current work is summarised here:
 
-- **qiskit_qae/ts_qiskit_qae_v1_0**: TS QAE based on binary encoding of TS windows developed and tested, results are not promising.
-- **qiskit_qae/ts_qiskit_qae_v2_0**: TS QAE based on unary encoding of TS windows developed and tested, results are promising.
+- **qiskit_qae/ts_qiskit_qae_binary_...**: TS QAE based on binary encoding of TS windows developed and tested, abandoned.
+- **qiskit_qae/ts_qiskit_qae_unary_...**: TS QAE based on unary encoding of TS windows developed and tested, abandoned.
+- **qiskit_qae/ts_qiskit_qae_angles_...**: TS QAE based on angle encoding of TS windows developed and tested, results are promising.
 
 ## Files
 This repository consists of the following groups of notebooks:
 
 - **dataset**: samples of data used by the notebooks
+- **images**: images used in the notebooks 
 - **classic_pytorch**: classically computed solutions with PyTorch
 - **classic_tensorflow**: classically computed solutions with Tensorflow
 - **qiskit_qae**: quantum autoencoders with Qiskit
 - **pennylane_qae**: quantuym autoencoders with PennyLane
 - **runs**: experimental runs with important results
+- **tests**: small tests of various features
 - **tutorials**: tutorials and demos from external sources
 - **legacy**: prgrams no longer needed or used
 
