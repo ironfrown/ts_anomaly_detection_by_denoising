@@ -17,20 +17,23 @@ various forms of time series, e.g. in vibrations, medical or radio signals.
 ## Files
 This repository consists of the following groups of notebooks:
 
-- **classic_pytorch**: classically computed solutions with PyTorch
-- **classic_tensorflow**: classically computed solutions with Tensorflow
-- **dataset**: samples of data used by the notebooks
+- *classic_pytorch*: classically computed solutions with PyTorch 
+- *classic_tensorflow*: classically computed solutions with Tensorflow
+- *dataset*: samples of data used by the notebooks
 - **images**: images used in the notebooks 
-- **legacy**: programs kept for archival use only
+- *legacy*: programs kept for archival use only
 - **qiskit_qae**: quantum autoencoders with Qiskit
   - *beer_qiskit_v5*: results for ICCS'2024 Qiskit final runs V3.06 (can change, archive in *tests*)
   - *beer_torch*: results for ICCS'2024 PyTorch final runs V3.04 (can change, archive in *tests*)
   - *tests*: important tests, e.g. ICCS'2024 initial and final submission + utilities V3.06
   - *vault*: QAE versions for critical design decisions
-- **pennylane_qae**: quantuym autoencoders with PennyLane
-- **play_ground**: small tests of various features
-- **runs**: experimental runs with important results
-- **tutorials**: tutorials and demos from external sources
+- *pennylane_qae*: quantum autoencoders with PennyLane
+- *play_ground*: small tests of various features
+- *runs*: experimental runs with important results
+- *tutorials*: tutorials and demos from external sources
+- **utils**: various utilities to support TS manipulation
+
+Folders in *italic* not synchronised, for development use only.
 
 ## Software installation
 To get installation details of Python, Anaconda / Miniconda, Pytorch, Tensorflow, Qiskit and PennyLane 
