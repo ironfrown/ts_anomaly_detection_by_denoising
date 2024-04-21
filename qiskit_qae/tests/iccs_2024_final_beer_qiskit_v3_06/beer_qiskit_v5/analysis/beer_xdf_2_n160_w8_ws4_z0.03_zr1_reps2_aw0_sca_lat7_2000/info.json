@@ -1,0 +1,1 @@
+{"case_name": "beer_xdf_2", "major_version": 3, "minor_version": 5, "epochs": 2000, "log_interv": 10, "history_len": 88, "score_len": 44, "loss_interv": 2, "sel_subset": 44}

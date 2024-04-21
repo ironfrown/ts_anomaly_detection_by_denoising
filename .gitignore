@@ -9,9 +9,16 @@ play_ground/
 runs/
 tutorials/
 qiskit_qae/beer_qiskit_v5/*
+!qiskit_qae/beer_qiskit_v5/no_data_on_github.txt
 qiskit_qae/beer_torch/*
-tests/beer_tests_v3_04/
-tests/various_data_tests_v2_15/
-tests/iccs_2024_initial_beer_qiskit_v3_00/
-tests/iccs_2024_final_beer_qiskit_v3_06/beer_qiskit_v5/*
-tests/iccs_2024_final_beer_torch_v3_06/beer_torch/*
+!qiskit_qae/beer_torch/no_data_on_github.txt
+qiskit_qae/tests/beer_tests_v3_04/
+qiskit_qae/tests/various_data_tests_v2_15/
+qiskit_qae/tests/iccs_2024_initial_beer_qiskit_v3_00/results/*
+qiskit_qae/tests/iccs_2024_initial_beer_qiskit_v3_00/figures/*
+!qiskit_qae/tests/iccs_2024_initial_beer_qiskit_v3_00/results/no_data_on_github.txt
+!qiskit_qae/tests/iccs_2024_initial_beer_qiskit_v3_00/figures/no_data_on_github.txt
+# qiskit_qae/tests/iccs_2024_final_beer_qiskit_v3_06/beer_qiskit_v5/*
+# !qiskit_qae/tests/iccs_2024_final_beer_qiskit_v3_06/beer_qiskit_v5/no_data_on_github.txt
+# qiskit_qae/tests/iccs_2024_final_beer_torch_v3_06/beer_torch/*
+# !qiskit_qae/tests/iccs_2024_final_beer_torch_v3_06/beer_torch/no_data_on_github.txt
