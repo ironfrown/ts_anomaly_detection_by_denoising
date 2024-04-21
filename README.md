@@ -9,9 +9,9 @@ various forms of time series, e.g. in vibrations, medical or radio signals.
 
 **The current work is summarised here:**
 
-- **TS QAE binary encoding**: Completed / TS QAE based on binary encoding of TS windows developed and tested, abandoned.
-- **TS QAE unary encoding**: Completed / TS QAE based on unary encoding of TS windows developed and tested, abandoned.
-- **TS QAE angle encoding**: Completed / TS QAE based on angle encoding of TS windows developed and tested, results are promising.
+- **TS QAE binary encoding**: Completed / QAE based on binary encoding of TS windows, abandoned.
+- **TS QAE unary encoding**: Completed / QAE based on unary encoding of TS windows, abandoned.
+- **TS QAE angle encoding**: Completed / QAE based on angle encoding of TS windows, adopted.
 - **ICCS'2024 paper**: Completed / Tests to support ICCS'2024 paper on TS denoising.
 
 ## Files
