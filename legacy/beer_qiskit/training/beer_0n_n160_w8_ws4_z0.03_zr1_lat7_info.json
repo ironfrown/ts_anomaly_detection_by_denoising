@@ -1,1 +1,0 @@
-{"case_name": "beer_0n", "major_version": 3, "minor_version": 5, "reps": 2, "ent": "sca", "num_qubits": 8, "num_trash": 1, "num_latent": 7, "cost_type": "zeroes", "cost_yscale": "linear", "shuffle_interv": 10, "log_interv": 1, "epochs": 500, "shots": 10000, "seed": 2024}
