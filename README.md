@@ -3,7 +3,7 @@ This project aims to apply various denoising techniques to identify anomalies in
 various forms of time series, e.g. in vibrations, medical or radio signals.
 
 ## Status
-**Current version: V3.00**
+**Current version: V3.06**
 - Several tests conducted on the full-QAE to determine its performance in response to the size of latent/trash space.
 
 **The current work is summarised here:**
