@@ -4,7 +4,8 @@ various forms of time series, e.g. in vibrations, medical or radio signals.
 
 ## Status
 **Current version: V3.06**
-- Several tests conducted on the full-QAE to determine its performance in response to the size of latent/trash space.
+- Several tests conducted on the full-QAE to determine its performance in response to the size of additional DoF qubits / rotation and entangling block repetions / latent vs. trash space.
+- Full tests to support the paper for ICCS'2024,
 
 **The current work is summarised here:**
 
