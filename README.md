@@ -9,9 +9,10 @@ various forms of time series, e.g. in vibrations, medical or radio signals.
 
 **The current work is summarised here:**
 
-- **qiskit_qae/ts_qae_qiskit_binary_...**: TS QAE based on binary encoding of TS windows developed and tested, abandoned.
-- **qiskit_qae/ts_qae_qiskit_unary_...**: TS QAE based on unary encoding of TS windows developed and tested, abandoned.
-- **qiskit_qae/ts_qae_qiskit_angles_...**: TS QAE based on angle encoding of TS windows developed and tested, results are promising.
+- **TS QAE binary encoding**: Completed / TS QAE based on binary encoding of TS windows developed and tested, abandoned.
+- **TS QAE unary encoding**: Completed / TS QAE based on unary encoding of TS windows developed and tested, abandoned.
+- **TS QAE angle encoding**: Completed / TS QAE based on angle encoding of TS windows developed and tested, results are promising.
+- **ICCS'2024 paper**: Completed / Tests to support ICCS'2024 paper on TS denoising.
 
 ## Files
 This repository consists of the following groups of notebooks:
