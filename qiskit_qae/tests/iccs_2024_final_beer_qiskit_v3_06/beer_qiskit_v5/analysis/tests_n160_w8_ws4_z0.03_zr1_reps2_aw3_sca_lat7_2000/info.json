@@ -1,0 +1,1 @@
+{"case_name": "tests", "major_version": 3, "minor_version": 5, "epochs": 2000, "log_interv": 10, "history_len": 158, "score_len": 52, "loss_interv": 3, "sel_subset": 52}

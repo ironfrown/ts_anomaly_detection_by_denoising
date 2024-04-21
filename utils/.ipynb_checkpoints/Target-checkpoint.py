@@ -1,7 +1,9 @@
-# Support functions for QTSA workshop
+# Support functions
 # Author: Jacob Cybulski, ironfrown[at]gmail.com
 # Aims: Provide support for quantum time series analysis
+# Date: 2023
 
+import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pylab
@@ -45,18 +47,25 @@ class Target:
         return x / (2.0*np.pi)
     
     # Plots target data in its natural range
-    def plot(self, sample_no=20, color='blue', marker='None', linestyle='solid', ylim='None'):
+    def plot(self, sample_no=20, color='blue', marker='None', linestyle='solid', 
+             xlim=None, ylim=None, title=None, save_plot=None):
+        if not title:
+            title = 'Function "'+self.name+'"'
         sample_x = [self.xmin+i*(self.xmax-self.xmin)/sample_no
                     for i in range(sample_no)]
         sample_y = [self.fun(self.xmin+i*(self.xmax-self.xmin)/sample_no) 
                   for i in range(sample_no)]
         plt.rcParams["figure.figsize"] = (12, 6)
-        plt.title('Function "'+self.name+'"')
-        plt.xlabel("Range")
+        plt.title(title)
+        plt.xlabel(f'Range ({sample_no} points)')
         plt.ylabel("Target value")
-        if ylim != 'None': plt.ylim(ylim)
+        if xlim is not None: plt.xlim(xlim)
+        if ylim is not None: plt.ylim(ylim)
         plt.xlim(self.xrange())
         plt.plot(sample_x, sample_y, color=color, marker=marker, linestyle=linestyle)
+        if save_plot is not None:
+            os.makedirs(os.path.dirname(save_plot), exist_ok=True)
+            plt.savefig(save_plot, format='eps')
         plt.show()
 
 # Simple trig function
@@ -72,6 +81,13 @@ class Target_2_sins(Target):
     
     def fun(self, x):
         return (np.sin(5.0 * x) + 0.5*np.sin(8.0 * x)) / 4 + 0.5
+
+# Complex trig function
+class Target_3_sins(Target):
+    name = "Target_3_sins"
+    
+    def fun(self, x):
+        return (0.3 * np.sin(0.7 * x) + (np.sin(5.0 * x)/3 + 0.5*np.sin(8.0 * x)) / 5 + 0.5) * 80 / (x-100)+1
 
 # Complex poly function
 class Target_poly(Target):
@@ -231,3 +247,52 @@ class Target_beer(Target):
             return self.fun_point(x)
         else:
             return np.array([self.fun_point(xi) for xi in x])
+
+# Normalised data from CSV file
+from utils.Files import *
+
+class Target_csv_file(Target):
+    name = "Target_csv_file"
+    header = []
+
+    def __init__(self, fpath, pt_from=None, pt_to=None, col=1, norm=True):
+        super().__init__()
+        
+        self.header, self.ts_data = read_csv_file(fpath)
+        self.ts_data = self.ts_data[:, col]
+        self.ymin = min(self.ts_data)
+        self.ymax = max(self.ts_data)
+        self.ts_data = np.array([(y-self.ymin)/(self.ymax - self.ymin) for y in self.ts_data])
+
+        pt_from = 0 if pt_from == None else pt_from
+        pt_to = len(self.ts_data)-1 if pt_to == None else pt_to
+        self.ts_data = self.ts_data[pt_from:pt_to]
+        minv, maxv = min(self.ts_data), max(self.ts_data)
+        self.ts_len = len(self.ts_data)
+        self.xmin = 0
+        self.xmax = self.ts_len-1
+        self.ymin = min(self.ts_data)
+        self.ymax = max(self.ts_data)
+        self.epsilon = 0.1
+        
+    def fun_point(self, x):
+        # print(x)
+        if (x < self.xmin):
+            return 0.0
+        elif (x > self.xmax):
+            return 0.0
+        elif (int(x) == self.xmax):
+            return self.ts_data[-1]
+        else:
+            lx = int(x)
+            ux = lx+1
+            ly = self.ts_data[lx]
+            uy = self.ts_data[ux]
+            return ly+(x-lx)*(uy-ly)/(ux-lx)
+
+    def fun(self, x):
+        if type(x) is int or type(x) is float or type(x) is np.float64:
+            return self.fun_point(x)
+        else:
+            return np.array([self.fun_point(xi) for xi in x])
+

@@ -1,6 +1,7 @@
 # Support functions for QTSA workshop
 # Author: Jacob Cybulski, ironfrown[at]gmail.com
 # Aims: Provide support for quantum time series analysis
+# Date: 2023
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -22,6 +23,23 @@ from IPython.display import clear_output
 def ts_wind_make(ts, wind, step):
     ts_wind = np.array([np.array(ts[i:i+wind]) for i in range(0, len(ts)-wind+1, step)])
     return ts_wind
+
+### Converts a windowed set of records into a flat time series
+#   ts: a windowed series of values
+#   step: step between windows, to make sense it assumes step <= window size
+#   returns: a flat time series
+def ts_wind_flatten(ts, step):
+    if ts.size == 0:
+        return ts
+    elif ts.shape[1] < step:
+        flat_list = []
+        for w in ts: flat_list += list(w)
+        return np.array(flat_list)
+    else:
+        flat_list = []
+        for w in ts: flat_list += list(w[0:step])
+        flat_list += list(ts[-1][step:])
+        return np.array(flat_list)
 
 ### Splits windowed time series (X, y) into training and validation parts
 #   X, y: time series split into sliding windows
