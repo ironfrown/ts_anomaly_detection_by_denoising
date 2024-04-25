@@ -36,8 +36,10 @@ This repository consists of the following groups of notebooks:
 Folders in *italic* not synchronised, for development use only.
 
 ## Software installation
-To get installation details of Python, Anaconda / Miniconda, Pytorch, Tensorflow, Qiskit and PennyLane 
-please refer to their respective web sites.
+To get installation details of Python, Anaconda / Miniconda, Pytorch, Tensorflow, Qiskit and PennyLane please refer to their respective web sites.<br/>
+Packages required for the execution can be found here:
+- **requirements.txt**: The full set of packages
+- **requirements_short.txt**: The core of packages that should include all other packages as their prerequisite
 
 ## Running qiskit_qae
 - Perform the following tasks:
