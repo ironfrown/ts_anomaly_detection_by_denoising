@@ -1,0 +1,179 @@
+# Data Encoding Strategies
+
+Encoding classical data into a quantum state is one of the most consequential design
+decisions in any QML pipeline. The choice of encoding affects expressibility,
+trainability, and the number of qubits required.
+
+This chapter covers the three encoding strategies used throughout this book:
+**Amplitude Embedding**, **Basis Embedding**, and **Angle Embedding**.
+
+## Why Encoding Matters
+
+Classical ML feeds a vector $\mathbf{x} \in \mathbb{R}^d$ directly into a model.
+Quantum ML must first map $\mathbf{x}$ to a quantum state $|\psi(\mathbf{x})\rangle$.
+Different mappings give the quantum circuit access to different representations of the
+data, and some are exponentially more compact than others.
+
+## Amplitude Embedding
+
+**Idea:** Encode a normalised vector of $2^n$ values as the amplitudes of an $n$-qubit
+state.
+
+$$|\psi\rangle = \sum_{i=0}^{2^n - 1} x_i |i\rangle, \quad \|\mathbf{x}\| = 1$$
+
+This is exponentially compact: $n$ qubits can encode $2^n$ values.
+
+```python
+import pennylane as qml
+import numpy as np
+
+dev = qml.device("default.qubit", wires=2)   # 2 qubits → 4 amplitudes
+
+@qml.qnode(dev)
+def amplitude_circuit(x):
+    # x must be normalised to unit norm
+    qml.AmplitudeEmbedding(x, wires=[0, 1], normalize=True)
+    return qml.state()
+
+x = np.array([1.0, 2.0, 3.0, 4.0])
+state = amplitude_circuit(x)
+# state ≈ [0.182, 0.365, 0.548, 0.730]  (normalised x)
+```
+
+::: {.callout-warning}
+`AmplitudeEmbedding` requires the input vector to have exactly $2^n$ elements.
+Use `normalize=True` to handle unnormalised inputs automatically.
+:::
+
+**Limitation:** Preparing an arbitrary amplitude state is generally hard (requires
+$O(2^n)$ gates). This encoding is most useful when the state preparation itself is
+tractable, or when we know the data has special structure.
+
+## Basis Embedding
+
+**Idea:** Encode a binary string $\mathbf{b} \in \{0, 1\}^n$ as the corresponding
+computational basis state $|b_0 b_1 \cdots b_{n-1}\rangle$.
+
+```python
+@qml.qnode(dev)
+def basis_circuit(bits):
+    # bits: integer list, e.g. [1, 0] → |10⟩
+    qml.BasisEmbedding(bits, wires=[0, 1])
+    return qml.state()
+
+state = basis_circuit([1, 0])
+# state = [0, 0, 1, 0]  → |10⟩
+```
+
+Each qubit is flipped with an $X$ gate wherever $b_i = 1$. This encoding is
+deterministic and requires no normalisation.
+
+**Limitation:** Only encodes binary data. Continuous features must be discretised
+first. Each sample requires exactly $n$ bits.
+
+## Angle Embedding
+
+**Idea:** Encode each feature $x_i$ as the rotation angle of a single-qubit gate.
+This is the most widely used encoding in variational QML.
+
+$$\text{AngleEmbedding}(\mathbf{x}) = \bigotimes_{i=0}^{n-1} R_Y(x_i)$$
+
+```python
+dev = qml.device("default.qubit", wires=3)
+
+@qml.qnode(dev)
+def angle_circuit(x):
+    # x: array of shape (n_qubits,)
+    qml.AngleEmbedding(x, wires=[0, 1, 2], rotation='Y')
+    return qml.probs(wires=[0, 1, 2])
+
+x = np.array([0.5, 1.2, 0.3])
+probs = angle_circuit(x)
+```
+
+The rotation axis can be `'X'`, `'Y'`, or `'Z'`.
+
+### Recovering the Input from Measurements
+
+For a single qubit with $R_Y(\theta)$ applied to $|0\rangle$:
+
+$$P(|0\rangle) = \cos^2(\theta/2)$$
+
+Inverting: $\theta = 2\arccos\!\left(\sqrt{P(|0\rangle)}\right)$. This means the
+original amplitude $\cos(\theta/2)$ can be approximately recovered from measurement
+statistics — though this requires many shots.
+
+## Encoding Margin (Scaling)
+
+When using angle encoding with real-valued features, it is common practice to scale
+inputs to a fraction of $\pi$:
+
+```python
+x_angle_margin = 0.5   # use at most π/2 of the rotation range
+
+@qml.qnode(dev, diff_method='adjoint')
+def circuit_with_margin(params, x):
+    # x is already normalised to [-1, 1]
+    qml.RY(x * np.pi * x_angle_margin, wires=0)
+    ...
+```
+
+A small margin (e.g., 0.3) keeps features away from the poles of the Bloch sphere,
+where gradients can vanish. A larger margin (e.g., 0.5) gives more expressive power
+but may introduce barren plateau issues for deep circuits.
+
+## Data Reuploading
+
+A single encoding layer limits the circuit's expressibility: the feature map is
+applied only once. **Data reuploading** alternates encoding and trainable layers:
+
+```
+RY(x₀) → RY(θ₀) → RY(x₀) → RY(θ₁) → ... → measurement
+```
+
+This is analogous to a deep classical network where the input is re-injected at
+multiple layers. It allows the circuit to implement more complex functions of the
+input.
+
+```python
+@qml.qnode(dev, diff_method='parameter-shift')
+def reuploading_circuit(params, x):
+    n_layers = params.shape[0]
+    for l in range(n_layers):
+        # Re-encode data at every layer
+        qml.AngleEmbedding(x, wires=range(n_qubits), rotation='Y')
+        # Trainable ansatz
+        qml.BasicEntanglerLayers(params[l:l+1], wires=range(n_qubits))
+    return qml.expval(qml.PauliZ(0))
+```
+
+::: {.callout-note}
+`diff_method='adjoint'` does not support data reuploading (mid-circuit encoding
+layers break the adjoint pass). Use `'parameter-shift'` instead, at the cost of
+more circuit evaluations.
+:::
+
+## Comparison Summary
+
+| Strategy | Qubits for $d$ features | Notes |
+|----------|------------------------|-------|
+| Amplitude | $\lceil \log_2 d \rceil$ | Exponentially compact; hard state prep |
+| Basis | $d$ bits | Binary data only |
+| Angle | $d$ qubits | Most practical; one qubit per feature |
+| Angle + reuploading | $d$ qubits | Higher expressibility; slower |
+
+## Exercises
+
+1. Create a 3-qubit `AngleEmbedding` circuit using `rotation='X'`. Measure
+   `qml.expval(qml.PauliZ(i))` for each qubit $i$. How does the expectation value
+   relate to the input angle $x_i$?
+
+2. For `AmplitudeEmbedding` with 4 qubits, what is the maximum number of features
+   that can be encoded? What happens if you pass a vector of length 10?
+
+3. Implement a 2-layer reuploading circuit on 2 qubits with `StronglyEntanglingLayers`
+   as the ansatz. Compare its output to a single-layer (no reuploading) circuit on
+   a sine wave dataset.
+
+4. Compute the encoding margin that maps the feature range $[-3, 3]$ to the rotation
+   range $[-\pi/2, \pi/2]$. Write the corresponding scaling code.

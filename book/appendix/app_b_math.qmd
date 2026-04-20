@@ -1,0 +1,148 @@
+# Mathematical Background {#sec-math}
+
+This appendix collects the mathematical tools used in the book. It is not a
+substitute for a quantum mechanics course; rather, it provides just enough
+formalism to read the code and proofs.
+
+## Linear Algebra Essentials
+
+### Vectors and Inner Products
+
+A quantum state of $n$ qubits is a unit vector in $\mathbb{C}^{2^n}$:
+
+$$|\psi\rangle = \sum_{i=0}^{2^n-1} \alpha_i |i\rangle, \quad \sum_i |\alpha_i|^2 = 1$$
+
+The *inner product* of two states $|\psi\rangle$ and $|\phi\rangle$:
+
+$$\langle\psi|\phi\rangle = \sum_i \alpha_i^* \beta_i \in \mathbb{C}$$
+
+The *fidelity* (overlap squared):
+
+$$F(\psi, \phi) = |\langle\psi|\phi\rangle|^2 \in [0, 1]$$
+
+### Tensor Products
+
+For two-qubit systems, the basis states are tensor products:
+
+$$|00\rangle = |0\rangle \otimes |0\rangle, \quad |01\rangle = |0\rangle \otimes |1\rangle, \quad \ldots$$
+
+The state of a product (non-entangled) system:
+
+$$|\psi_A\rangle \otimes |\psi_B\rangle$$
+
+### Density Matrices
+
+A *pure state* $|\psi\rangle$ can equivalently be described by its density matrix:
+
+$$\rho = |\psi\rangle\langle\psi|$$
+
+For a system with subsystems $A$ (latent) and $B$ (trash), the *partial trace*
+gives the reduced state of $A$:
+
+$$\rho_A = \text{Tr}_B[\rho]$$
+
+## Quantum Gates as Matrices
+
+Single-qubit gates act on $\mathbb{C}^2$; they are $2 \times 2$ unitary matrices.
+
+### Rotation Gates
+
+$$R_X(\theta) = e^{-i\theta X/2} = \begin{pmatrix}\cos(\theta/2) & -i\sin(\theta/2) \\ -i\sin(\theta/2) & \cos(\theta/2)\end{pmatrix}$$
+
+$$R_Y(\theta) = e^{-i\theta Y/2} = \begin{pmatrix}\cos(\theta/2) & -\sin(\theta/2) \\ \sin(\theta/2) & \cos(\theta/2)\end{pmatrix}$$
+
+$$R_Z(\theta) = e^{-i\theta Z/2} = \begin{pmatrix}e^{-i\theta/2} & 0 \\ 0 & e^{i\theta/2}\end{pmatrix}$$
+
+Applied to $|0\rangle$:
+
+$$R_Y(\theta)|0\rangle = \cos\!\tfrac{\theta}{2}|0\rangle + \sin\!\tfrac{\theta}{2}|1\rangle$$
+$$\Rightarrow\quad P(|0\rangle) = \cos^2(\theta/2), \quad P(|1\rangle) = \sin^2(\theta/2)$$
+
+## Measurements and Observables
+
+### Expectation Value
+
+For observable $\hat{O}$ and state $|\psi\rangle$:
+
+$$\langle\hat{O}\rangle = \langle\psi|\hat{O}|\psi\rangle$$
+
+For PauliZ on qubit 0:
+
+$$\langle Z_0 \rangle = P(|0\rangle) - P(|1\rangle) \in [-1, +1]$$
+
+### Pauli Operators
+
+$$X = \begin{pmatrix}0&1\\1&0\end{pmatrix}, \quad Y = \begin{pmatrix}0&-i\\i&0\end{pmatrix}, \quad Z = \begin{pmatrix}1&0\\0&-1\end{pmatrix}$$
+
+## Variational Principle
+
+A *variational circuit* parameterises a unitary:
+
+$$U(\boldsymbol{\theta}) = \prod_{l} U_l(\theta_l)$$
+
+where each $U_l(\theta_l) = e^{-i\theta_l H_l/2}$ for some Hermitian generator $H_l$.
+
+The model output is:
+
+$$f(\mathbf{x}; \boldsymbol{\theta}) = \langle 0|U^\dagger(\boldsymbol{\theta})\,\phi^\dagger(\mathbf{x})\, \hat{O}\, \phi(\mathbf{x})\,U(\boldsymbol{\theta})|0\rangle$$
+
+## Parameter-Shift Rule
+
+For generators with two eigenvalues $\pm r$:
+
+$$\frac{\partial f}{\partial \theta_l} = r\left[f\!\left(\theta_l + \frac{\pi}{4r}\right) - f\!\left(\theta_l - \frac{\pi}{4r}\right)\right]$$
+
+For standard Pauli rotations ($r = 1/2$, shift $= \pi/2$):
+
+$$\frac{\partial f}{\partial \theta_l} = \frac{f(\theta_l + \pi/2) - f(\theta_l - \pi/2)}{2}$$
+
+This is exact (not an approximation) and requires exactly 2 circuit evaluations per
+parameter.
+
+## Loss Functions
+
+### Mean Squared Error (MSE)
+
+$$\text{MSE} = \frac{1}{N}\sum_{i=1}^N (y_i - \hat{y}_i)^2$$
+
+Used for regression (Chapters 4–5).
+
+### R² (Coefficient of Determination)
+
+$$R^2 = 1 - \frac{\sum_i(y_i - \hat{y}_i)^2}{\sum_i(y_i - \bar{y})^2}$$
+
+$R^2 \in (-\infty, 1]$; $R^2 = 1$ is perfect fit.
+
+### Binary Cross-Entropy (BCE)
+
+$$\mathcal{L}_\text{BCE} = -\frac{1}{N}\sum_{i=1}^N\left[y_i \log \hat{p}_i + (1-y_i)\log(1-\hat{p}_i)\right]$$
+
+Used for classification (Chapters 6–8). Requires $\hat{p}_i \in (0, 1)$.
+
+### Sigmoid
+
+$$\sigma(z) = \frac{1}{1 + e^{-z}} \in (0, 1)$$
+
+Maps logits (real values) to probabilities.
+
+## SWAP Test
+
+The SWAP test circuit estimates fidelity without direct state access:
+
+$$P(\text{ancilla} = |0\rangle) = \frac{1 + |\langle\psi|\phi\rangle|^2}{2}$$
+
+$$\Rightarrow\quad F(\psi,\phi) = |\langle\psi|\phi\rangle|^2 = 2P(|0\rangle_\text{anc}) - 1$$
+
+## Mackey-Glass Equation
+
+$$\frac{dx(t)}{dt} = \frac{\beta\,x(t-\tau)}{1 + x(t-\tau)^n} - \gamma\,x(t)$$
+
+| Parameter | Typical value | Role |
+|-----------|--------------|------|
+| $\beta$ | 0.2 | Positive feedback strength |
+| $\gamma$ | 0.1 | Decay rate |
+| $\tau$ | 17 | Delay (controls chaos) |
+| $n$ | 10 | Nonlinearity exponent |
+
+For $\tau > 16.8$, the system exhibits chaotic dynamics. For $\tau \leq 16.8$, it
+converges to a limit cycle.

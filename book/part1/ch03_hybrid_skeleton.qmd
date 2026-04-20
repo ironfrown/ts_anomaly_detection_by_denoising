@@ -1,0 +1,165 @@
+# Anatomy of a Hybrid Model
+
+A *hybrid quantum-classical model* combines quantum circuits with classical neural
+network layers. Understanding how these pieces connect is essential before building
+full models in Part II.
+
+## The Core Idea
+
+Classical layers and quantum layers are interchangeable components in PyTorch's
+computation graph. The quantum circuit acts as a differentiable function — its
+Jacobian with respect to trainable parameters is computed by PennyLane and passed
+back through PyTorch's autograd engine.
+
+```
+Input data
+    │
+    ▼
+[Classical preprocessing]   ← nn.Linear, nn.ReLU, ...
+    │
+    ▼
+[Quantum circuit]            ← @qml.qnode(dev, interface="torch")
+    │
+    ▼
+[Classical postprocessing]   ← nn.Linear, nn.Sigmoid, ...
+    │
+    ▼
+Output (prediction)
+```
+
+## Connecting PennyLane to PyTorch
+
+### Step 1 — Define the QNode with `interface="torch"`
+
+```python
+import pennylane as qml
+import torch
+import torch.nn as nn
+
+n_qubits = 2
+n_layers  = 2
+dev = qml.device("default.qubit", wires=n_qubits)
+
+@qml.qnode(dev, interface="torch", diff_method="adjoint")
+def quantum_circuit(inputs, weights):
+    # inputs:  shape (n_qubits,)
+    # weights: shape (n_layers, n_qubits, 3)
+    qml.AngleEmbedding(inputs, wires=range(n_qubits), rotation='Y')
+    qml.StronglyEntanglingLayers(weights, wires=range(n_qubits))
+    return qml.expval(qml.PauliZ(0))
+```
+
+### Step 2 — Wrap as a `TorchLayer`
+
+`qml.qnn.TorchLayer` turns the QNode into a standard `nn.Module` layer:
+
+```python
+weight_shapes = {"weights": (n_layers, n_qubits, 3)}
+quantum_layer  = qml.qnn.TorchLayer(quantum_circuit, weight_shapes)
+```
+
+The `weight_shapes` dictionary maps each trainable parameter name to its shape.
+PennyLane initialises these weights randomly and registers them with PyTorch so they
+appear in `model.parameters()`.
+
+### Step 3 — Embed in an `nn.Module`
+
+```python
+class SimpleHybrid(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.quantum = quantum_layer          # quantum layer
+        self.out     = nn.Linear(1, 1)       # classical output layer
+
+    def forward(self, x):
+        # x: shape (batch, n_qubits)
+        q_out = self.quantum(x).float()      # shape (batch, 1)
+        return self.out(q_out)               # shape (batch, 1)
+```
+
+## Multi-Branch Hybrid Architecture
+
+Some problems benefit from processing different parts of the input with separate
+branches — either quantum or classical — before joining them:
+
+```python
+# f(d1, d2) = m1( c3( join( c1(d1), c2( f2(d2) ) ) ) )
+class MultiBranchHybrid(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # Classical pre-processing for branch 2
+        self.f2 = nn.Sequential(nn.Linear(4, 8), nn.ReLU(), nn.Linear(8, 2))
+
+        # Quantum branches (TorchLayer wrappers)
+        self.c1 = qml.qnn.TorchLayer(circuit_1, weight_shapes_1)
+        self.c2 = qml.qnn.TorchLayer(circuit_2, weight_shapes_2)
+        self.c3 = qml.qnn.TorchLayer(circuit_3, weight_shapes_3)
+
+        # Final classical head
+        self.m1 = nn.Linear(2, 1)
+
+    def forward(self, d1, d2):
+        b1 = self.c1(d1)                        # branch 1: direct quantum
+        b2 = self.c2(self.f2(d2))               # branch 2: classical → quantum
+        joined = torch.cat([b1, b2], dim=-1)    # join outputs
+        c3_out = self.c3(joined)
+        return self.m1(c3_out.float())
+```
+
+## Training Loop
+
+Once the model is an `nn.Module`, training is standard PyTorch:
+
+```python
+model     = SimpleHybrid()
+optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+loss_fn   = nn.MSELoss()
+
+for epoch in range(200):
+    optimizer.zero_grad()
+    predictions = model(X_train)
+    loss = loss_fn(predictions, y_train)
+    loss.backward()          # gradients flow through quantum + classical layers
+    optimizer.step()
+```
+
+::: {.callout-note}
+`loss.backward()` triggers PennyLane's differentiation for the quantum layers and
+PyTorch's autograd for the classical layers. No special handling is needed.
+:::
+
+## Weight Shape Reference
+
+| Ansatz | Shape |
+|--------|-------|
+| `BasicEntanglerLayers` | `(n_layers, n_qubits)` |
+| `StronglyEntanglingLayers` | `(n_layers, n_qubits, 3)` |
+| Single `RY` per wire | `(n_qubits,)` |
+
+## Key Considerations
+
+**Interface consistency.** The QNode must use `interface="torch"`. Passing a NumPy
+array into a TorchLayer will cause a type error.
+
+**Output shape.** `qml.expval(qml.PauliZ(0))` returns a scalar per sample; the
+TorchLayer adds a batch dimension, giving shape `(batch,)`. Use `.unsqueeze(-1)` or
+`nn.Linear(1, ...)` to connect to subsequent layers.
+
+**Gradient method.** `diff_method="adjoint"` is fastest but requires circuits
+without mid-circuit measurements or data reuploading. Fall back to
+`"parameter-shift"` for those cases.
+
+## Exercises
+
+1. Build a hybrid model with one classical `nn.Linear(4, 2)` layer feeding into a
+   2-qubit quantum circuit, followed by `nn.Linear(1, 1)`. Print the model's
+   parameter count.
+
+2. Replace `StronglyEntanglingLayers` with `BasicEntanglerLayers`. Update the
+   `weight_shapes` dictionary accordingly and verify training still works.
+
+3. In the multi-branch architecture, swap the quantum branch `c1` for a classical
+   `nn.Linear`. Does training speed change significantly?
+
+4. Modify the training loop to record train and validation loss at each epoch, then
+   plot the learning curves.

@@ -1,0 +1,205 @@
+# Quantum Circuits and PennyLane Basics
+
+## What Is a Quantum Circuit?
+
+A quantum circuit is a sequence of operations — called *gates* — applied to one or
+more *qubits*. Unlike classical bits, which are always 0 or 1, a qubit can be in a
+**superposition** of both states:
+
+$$|\psi\rangle = \alpha|0\rangle + \beta|1\rangle, \quad |\alpha|^2 + |\beta|^2 = 1$$
+
+The coefficients $\alpha$ and $\beta$ are complex amplitudes. When we *measure* the
+qubit, the superposition collapses: we observe $|0\rangle$ with probability
+$|\alpha|^2$ and $|1\rangle$ with probability $|\beta|^2$.
+
+::: {.callout-note}
+The requirement $|\alpha|^2 + |\beta|^2 = 1$ is the *normalisation condition*. It
+ensures that the total probability of all outcomes sums to one.
+:::
+
+## PennyLane in Five Minutes
+
+[PennyLane](https://pennylane.ai) is a Python library for differentiable quantum
+programming. Its key idea: quantum circuits are treated as differentiable functions,
+so gradients can be computed and used by any optimiser.
+
+### Devices
+
+A *device* is the (simulated or real) quantum hardware that executes circuits:
+
+```python
+import pennylane as qml
+
+# Fast CPU simulator (default)
+dev = qml.device("default.qubit", wires=2)
+
+# Lightning C++ simulator — much faster for >10 qubits
+dev_fast = qml.device("lightning.qubit", wires=2)
+```
+
+`wires` specifies the number of qubits. Wire indices are integers `0, 1, 2, ...`.
+
+### Quantum Nodes (QNodes)
+
+A *QNode* wraps a Python function that builds a circuit:
+
+```python
+@qml.qnode(dev)
+def my_circuit(theta):
+    qml.RY(theta, wires=0)           # rotate qubit 0 by angle theta
+    qml.CNOT(wires=[0, 1])           # entangle qubits 0 and 1
+    return qml.probs(wires=[0, 1])   # measure all 4 outcome probabilities
+```
+
+Calling `my_circuit(0.5)` executes the circuit and returns a NumPy array of
+probabilities $[P_{00}, P_{01}, P_{10}, P_{11}]$.
+
+### Rotation Gates
+
+The most common single-qubit gates are the *Pauli rotations*:
+
+$$R_Y(\theta) = \begin{pmatrix} \cos(\theta/2) & -\sin(\theta/2) \\ \sin(\theta/2) & \cos(\theta/2) \end{pmatrix}$$
+
+Applied to $|0\rangle$, $R_Y(\theta)$ produces the state
+$\cos(\theta/2)|0\rangle + \sin(\theta/2)|1\rangle$, so:
+
+$$P(|0\rangle) = \cos^2(\theta/2), \quad P(|1\rangle) = \sin^2(\theta/2)$$
+
+```python
+@qml.qnode(dev)
+def ry_circuit(theta):
+    qml.RY(theta, wires=0)
+    return qml.probs(wires=0)
+
+import numpy as np
+theta = np.pi / 3
+probs = ry_circuit(theta)
+# probs[0] ≈ cos²(π/6) ≈ 0.75
+# probs[1] ≈ sin²(π/6) ≈ 0.25
+```
+
+## Measurement Types
+
+PennyLane supports two primary measurement strategies.
+
+### Probability Measurement
+
+```python
+return qml.probs(wires=[0, 1])
+# → array of 2^n probabilities, shape (4,) for 2 qubits
+```
+
+Returns the full probability distribution over all $2^n$ computational basis states.
+
+### Expectation Value
+
+```python
+return qml.expval(qml.PauliZ(0))
+# → scalar in [-1, +1]
+```
+
+The Pauli-Z expectation value is:
+
+$$\langle Z \rangle = P(|0\rangle) - P(|1\rangle)$$
+
+It maps to $+1$ when the qubit is certainly $|0\rangle$ and $-1$ when certainly
+$|1\rangle$. This scalar output is what most QML models use as a prediction.
+
+::: {.callout-important}
+**`probs` vs `expval` — output shape difference.**
+A circuit returning `qml.probs()` produces one probability vector per call, even
+when inputs are batched. A circuit returning `qml.expval()` produces one scalar per
+qubit per sample when parameter broadcasting is used.
+:::
+
+## Circuit Visualisation
+
+```python
+print(qml.draw(my_circuit)(0.5))
+qml.draw_mpl(my_circuit)(0.5)   # matplotlib figure
+```
+
+Barriers can be added for visual clarity without affecting circuit behaviour:
+
+```python
+qml.Barrier(wires=[0, 1])
+```
+
+## Computing Gradients
+
+PennyLane can differentiate circuits with respect to their parameters. The default
+method for most circuits is the **parameter-shift rule**:
+
+$$\frac{\partial f}{\partial \theta} = \frac{f(\theta + \pi/2) - f(\theta - \pi/2)}{2}$$
+
+This requires exactly two circuit evaluations per parameter. For circuits that
+support it, the `adjoint` method is faster (one forward + one backward pass):
+
+```python
+@qml.qnode(dev, diff_method='adjoint')
+def circuit(params, x):
+    ...
+```
+
+### Jacobian Example
+
+For a circuit with multiple parameters, the full Jacobian shows how each output
+probability changes with each parameter:
+
+```python
+# Jacobian: shape (n_outputs, n_params)
+jac = qml.jacobian(my_circuit)(params)
+```
+
+## Parameter Broadcasting (Batching)
+
+PennyLane can evaluate a circuit on an entire batch of inputs at once:
+
+```python
+X_batch = np.array([0.1, 0.5, 1.2, 2.0])   # 4 inputs
+
+@qml.qnode(dev)
+def circuit(x):
+    qml.RY(x, wires=0)
+    return qml.expval(qml.PauliZ(0))
+
+results = circuit(X_batch)   # shape (4,) — one scalar per input
+```
+
+This avoids a Python loop and is significantly faster on simulators.
+
+## A Minimal QML Model
+
+Here is the smallest possible variational circuit — one qubit, one trainable
+parameter, one input feature:
+
+```python
+dev = qml.device("default.qubit", wires=1)
+
+@qml.qnode(dev, diff_method='adjoint')
+def tiny_model(params, x):
+    # Feature map: encode input x
+    qml.RY(x, wires=0)
+    # Ansatz: trainable rotation
+    qml.RY(params[0], wires=0)
+    # Measurement
+    return qml.expval(qml.PauliZ(0))
+```
+
+The circuit has two rotation layers: one controlled by data (`x`) and one by a
+learnable parameter. Training adjusts `params[0]` to minimise a loss function.
+
+## Exercises
+
+1. Build a 2-qubit circuit that applies `qml.RY(theta, wires=0)` followed by
+   `qml.CNOT(wires=[0, 1])`. Measure `qml.probs(wires=[0, 1])`. What are the
+   probabilities when `theta = 0`? When `theta = π`?
+
+2. Change the measurement to `qml.expval(qml.PauliZ(0))`. How does the output
+   differ from `probs`?
+
+3. Compute the gradient of the `tiny_model` above with respect to `params[0]`
+   using `qml.grad`. Verify manually using the parameter-shift rule formula.
+
+4. Run `tiny_model` on a batch of 8 equally spaced inputs in $[0, \pi]$. Plot the
+   output as a function of `x`.

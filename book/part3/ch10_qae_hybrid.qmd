@@ -1,0 +1,222 @@
+# Hybrid and Mirror QAE
+
+This chapter extends the pure PennyLane QAE from Chapter 9 in two directions:
+
+1. **Hybrid QAE** — wrapping the circuit as a PyTorch `nn.Module` and adding
+   classical layers
+2. **Mirror QAE** — a staged training strategy that trains decoder and encoder
+   separately, preserving phase information
+
+## Hybrid QAE with PyTorch
+
+Rewriting the QAE as a `nn.Module` gives access to the full PyTorch ecosystem:
+`DataLoader`, learning rate schedulers, early stopping, and classical layers.
+
+### Circuit as TorchLayer
+
+```python
+import pennylane as qml
+import torch
+import torch.nn as nn
+
+n_qubits = 4
+n_latent  = 2
+n_layers  = 3
+dev = qml.device("lightning.qubit", wires=n_qubits)
+
+@qml.qnode(dev, interface="torch", diff_method="adjoint")
+def qae_torch(inputs, weights):
+    # inputs:  (n_qubits,)
+    # weights: (n_layers, n_qubits, 3)
+    qml.AngleEmbedding(inputs, wires=range(n_qubits), rotation='Y')
+    qml.StronglyEntanglingLayers(weights, wires=range(n_qubits))
+    # Return trash qubit expectation values
+    return [qml.expval(qml.PauliZ(w)) for w in range(n_latent, n_qubits)]
+
+weight_shapes = {"weights": (n_layers, n_qubits, 3)}
+qae_layer = qml.qnn.TorchLayer(qae_torch, weight_shapes)
+```
+
+### Hybrid Model
+
+```python
+class HybridQAE(nn.Module):
+    def __init__(self, n_qubits, n_latent):
+        super().__init__()
+        self.n_trash = n_qubits - n_latent
+
+        # Classical pre-encoder: compress features before quantum layer
+        self.pre = nn.Sequential(
+            nn.Linear(n_qubits, n_qubits * 2),
+            nn.Tanh(),
+            nn.Linear(n_qubits * 2, n_qubits),
+        )
+
+        # Quantum core
+        self.qae = qae_layer
+
+        # Classical post-decoder: refine reconstruction
+        self.post = nn.Sequential(
+            nn.Linear(self.n_trash, n_qubits),
+            nn.Tanh(),
+            nn.Linear(n_qubits, n_qubits),
+        )
+
+    def forward(self, x):
+        # x: (batch, n_qubits)
+        x_pre  = self.pre(x)                       # (batch, n_qubits)
+        trash  = self.qae(x_pre).float()           # (batch, n_trash) — trash expvals
+        recon  = self.post(trash)                  # (batch, n_qubits)
+        return recon, trash
+```
+
+The model returns both the reconstruction and the trash qubit values. The loss
+combines reconstruction error and trash qubit penalty:
+
+$$\mathcal{L} = \lambda_1 \underbrace{\|\mathbf{x}_\text{clean} - \hat{\mathbf{x}}\|^2}_{\text{reconstruction}} - \lambda_2 \underbrace{\sum_j \langle Z_j \rangle_\text{trash}}_{\text{compression}}$$
+
+```python
+def hybrid_qae_loss(recon, x_clean, trash_expvals, lam1=1.0, lam2=0.5):
+    recon_loss = nn.functional.mse_loss(recon, x_clean)
+    trash_loss = -trash_expvals.mean()        # push trash toward |0⟩
+    return lam1 * recon_loss + lam2 * trash_loss
+```
+
+## Mirror QAE: Three-Stage Training
+
+The Mirror QAE addresses a fundamental problem: if we train the full encoder+decoder
+jointly from scratch, the encoder may learn to store everything in the trash space
+and nothing in the latent space.
+
+The solution is a structured three-stage protocol:
+
+### Stage 1 — Train the Decoder on Clean Data
+
+The decoder (adjoint of the encoder circuit) first learns to *recognise* clean data.
+It is trained to output clean windows given clean inputs, minimising trash qubit
+energy.
+
+```python
+@qml.qnode(dev, interface="torch", diff_method="adjoint")
+def decoder_circuit(inputs, weights):
+    """Decoder only: adjoint of the encoder."""
+    qml.AngleEmbedding(inputs, wires=range(n_qubits), rotation='Y')
+    # Adjoint (inverse) of the encoder ansatz
+    qml.adjoint(qml.StronglyEntanglingLayers)(weights, wires=range(n_qubits))
+    return [qml.expval(qml.PauliZ(w)) for w in range(n_qubits)]
+
+decoder_layer = qml.qnn.TorchLayer(
+    decoder_circuit, {"weights": (n_layers, n_qubits, 3)}
+)
+
+# Stage 1 training: minimise reconstruction error on CLEAN data
+optimizer_s1 = torch.optim.Adam(decoder_layer.parameters(), lr=0.01)
+for epoch in range(100):
+    optimizer_s1.zero_grad()
+    recon = decoder_layer(X_clean_train).float()
+    loss  = nn.functional.mse_loss(recon, X_clean_train)
+    loss.backward()
+    optimizer_s1.step()
+```
+
+### Stage 2 — Train the Encoder on Noisy Data
+
+With the decoder weights *frozen*, we train the encoder to compress noisy inputs
+into a latent representation that the fixed decoder can reconstruct cleanly.
+
+```python
+@qml.qnode(dev, interface="torch", diff_method="adjoint")
+def encoder_circuit(inputs, enc_weights):
+    qml.AngleEmbedding(inputs, wires=range(n_qubits), rotation='Y')
+    qml.StronglyEntanglingLayers(enc_weights, wires=range(n_qubits))
+    return [qml.expval(qml.PauliZ(w)) for w in range(n_qubits)]
+
+encoder_layer = qml.qnn.TorchLayer(
+    encoder_circuit, {"enc_weights": (n_layers, n_qubits, 3)}
+)
+
+class MirrorQAE_Stage2(nn.Module):
+    def __init__(self, encoder, decoder):
+        super().__init__()
+        self.encoder = encoder
+        self.decoder = decoder
+
+    def forward(self, x_noisy):
+        latent = self.encoder(x_noisy).float()   # encode noisy input
+        recon  = self.decoder(latent).float()    # decode with fixed decoder
+        return recon
+
+# Freeze decoder weights
+for p in decoder_layer.parameters():
+    p.requires_grad = False
+
+model_s2  = MirrorQAE_Stage2(encoder_layer, decoder_layer)
+opt_s2    = torch.optim.Adam(encoder_layer.parameters(), lr=0.01)
+
+for epoch in range(150):
+    opt_s2.zero_grad()
+    recon = model_s2(X_noisy_train)
+    loss  = nn.functional.mse_loss(recon, X_clean_train)
+    loss.backward()
+    opt_s2.step()
+```
+
+### Stage 3 — Joint Fine-Tuning (Optional)
+
+After stage 2, unfreeze both encoder and decoder for a short joint fine-tuning pass:
+
+```python
+for p in decoder_layer.parameters():
+    p.requires_grad = True
+
+opt_s3 = torch.optim.Adam(model_s2.parameters(), lr=0.001)
+for epoch in range(50):
+    opt_s3.zero_grad()
+    recon = model_s2(X_noisy_train)
+    loss  = nn.functional.mse_loss(recon, X_clean_train)
+    loss.backward()
+    opt_s3.step()
+```
+
+## Why Phase Information Matters
+
+The SWAP test measures $|\langle\psi|\phi\rangle|^2$, which is *phase-insensitive*:
+two states that differ only by a global phase appear identical. Direct qubit
+measurements are also phase-insensitive.
+
+However, the *relative* phase between amplitudes affects interference patterns in
+multi-qubit circuits. If we use `qml.state()` measurements or amplitude-based loss
+functions, phase information is preserved. The Mirror QAE, by using the adjoint
+decoder, maintains phase coherence between encoder and decoder by construction.
+
+## Comparison: Pure vs Hybrid vs Mirror QAE
+
+| Criterion | Pure PennyLane | Hybrid PyTorch | Mirror QAE |
+|-----------|---------------|---------------|------------|
+| Classical layers | None | Pre + post | None (structured training) |
+| Training protocol | Joint | Joint | 3-stage |
+| Phase preservation | Partial | No | Yes |
+| Implementation complexity | Low | Medium | High |
+| Convergence stability | Low | Medium | High |
+
+## Exercises
+
+1. Implement the full three-stage Mirror QAE. Compare its test MSE to the naive
+   joint-training QAE. Does staged training produce a lower final MSE?
+
+2. In the Hybrid QAE, vary the `n_latent` compression ratio. Plot reconstruction
+   MSE vs compression ratio for both clean and noisy inputs.
+
+3. Add learning rate decay to Stage 2 training:
+   `scheduler = torch.optim.lr_scheduler.StepLR(opt_s2, step_size=50, gamma=0.5)`.
+   Does it improve convergence?
+
+4. Add noise at different levels (`noise_level` ∈ {0.01, 0.05, 0.1, 0.2}) and
+   compare how pure QAE and Hybrid QAE handle increasing noise.
+
+5. Replace `StronglyEntanglingLayers` with `BasicEntanglerLayers` in the Mirror QAE.
+   Does the 3-stage protocol still produce good reconstructions?
+
+6. The adjoint decoder assumes the encoder is unitary. Classical layers break this
+   assumption. Discuss: what does "latent space" mean in the Hybrid QAE, and how
+   does it differ from the pure quantum case?

@@ -1,0 +1,202 @@
+# Quantum Estimator for Real Datasets
+
+In Chapter 4 we fitted a known function. Here we build a
+*Quantum Estimator* — a quantum regression model — and apply it to real-world
+datasets. This chapter introduces proper train/test evaluation, the R² metric, and
+residuals analysis.
+
+## What Is a Quantum Estimator?
+
+The term *estimator* (borrowed from scikit-learn) refers to a model that *estimates*
+a continuous target variable. Our quantum estimator is a variational circuit trained
+to minimise MSE on labelled data.
+
+## Datasets
+
+We use three datasets of increasing complexity:
+
+**1. Synthetic regression** (scikit-learn `make_regression`):
+```python
+from sklearn.datasets import make_regression
+X, y = make_regression(n_samples=100, n_features=1, noise=10, random_state=42)
+```
+
+**2. Real Estate (Taiwan)** — predict house price from location and age.
+
+**3. Swiss Roll** — 3D manifold; tests whether the circuit can learn nonlinear
+structure from 2D projections.
+
+```python
+from sklearn.datasets import make_swiss_roll
+X_3d, t = make_swiss_roll(n_samples=200, noise=0.1, random_state=42)
+X = X_3d[:, [0, 2]]   # project to 2D
+y = t                  # colour coordinate as target
+```
+
+## Preprocessing
+
+For angle encoding, features must lie in a range the circuit can distinguish.
+Standard scaling followed by a per-feature margin:
+
+```python
+from sklearn.preprocessing import StandardScaler
+
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)     # zero mean, unit variance
+
+x_angle_margin = 0.3                    # compress to [-0.3π, 0.3π]
+# Usage inside circuit: qml.RY(x * np.pi * x_angle_margin, wires=i)
+```
+
+A margin of 0.3 keeps inputs away from the poles of the Bloch sphere. You can
+increase it to 0.5 for more expressive encoding, but watch for vanishing gradients.
+
+## The Estimator Circuit
+
+```python
+import numpy as np
+import pennylane as qml
+
+n_qubits        = 4
+n_layers        = 3
+x_angle_margin  = 0.3
+dev = qml.device("lightning.qubit", wires=n_qubits)
+
+@qml.qnode(dev, diff_method='adjoint')
+def qnn_estimator(params, x):
+    # Feature map: encode each (scaled) feature onto one qubit
+    for i, xi in enumerate(x):
+        qml.RY(xi * np.pi * x_angle_margin, wires=i)
+
+    # Ansatz: choose one
+    qml.BasicEntanglerLayers(params, wires=range(n_qubits), rotation=qml.RY)
+    # -- or --
+    # qml.StronglyEntanglingLayers(params, wires=range(n_qubits))
+
+    # Measurement: scalar prediction from qubit 0
+    return qml.expval(qml.PauliZ(0))
+```
+
+For `BasicEntanglerLayers`: `params.shape = (n_layers, n_qubits)`.
+For `StronglyEntanglingLayers`: `params.shape = (n_layers, n_qubits, 3)`.
+
+## Train / Test Split
+
+```python
+from sklearn.model_selection import train_test_split
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X_scaled, y, test_size=0.2, random_state=42
+)
+```
+
+## Training
+
+```python
+params = np.random.uniform(0, np.pi, size=(n_layers, n_qubits))
+optimizer = qml.AdamOptimizer(stepsize=0.05)
+
+def cost(params, X_batch, y_batch):
+    preds = np.array([qnn_estimator(params, x) for x in X_batch])
+    return np.mean((preds - y_batch) ** 2)
+
+n_epochs = 200
+for epoch in range(n_epochs):
+    params, train_loss = optimizer.step_and_cost(
+        lambda p: cost(p, X_train, y_train), params
+    )
+    if epoch % 50 == 0:
+        print(f"Epoch {epoch:3d} | Train MSE = {train_loss:.4f}")
+```
+
+## Evaluation Metrics
+
+### Mean Squared Error
+
+$$\text{MSE} = \frac{1}{n}\sum_{i=1}^{n}(y_i - \hat{y}_i)^2$$
+
+Lower is better; same units as $y^2$.
+
+### R² (Coefficient of Determination)
+
+$$R^2 = 1 - \frac{\text{SS}_\text{res}}{\text{SS}_\text{tot}} = 1 - \frac{\sum_i(y_i - \hat{y}_i)^2}{\sum_i(y_i - \bar{y})^2}$$
+
+$R^2 = 1$ is a perfect fit; $R^2 = 0$ means the model does no better than predicting
+the mean; $R^2 < 0$ is worse than predicting the mean.
+
+```python
+from sklearn.metrics import mean_squared_error, r2_score
+
+y_pred_train = np.array([qnn_estimator(params, x) for x in X_train])
+y_pred_test  = np.array([qnn_estimator(params, x) for x in X_test])
+
+print(f"Train MSE = {mean_squared_error(y_train, y_pred_train):.4f}")
+print(f"Test  MSE = {mean_squared_error(y_test,  y_pred_test ):.4f}")
+print(f"Train R²  = {r2_score(y_train, y_pred_train):.4f}")
+print(f"Test  R²  = {r2_score(y_test,  y_pred_test ):.4f}")
+```
+
+## Residuals Analysis
+
+Residuals are the signed prediction errors:
+
+$$r_i = y_i - \hat{y}_i$$
+
+Plotting residuals reveals systematic bias:
+
+```python
+import matplotlib.pyplot as plt
+
+residuals = y_test - y_pred_test
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+
+# Residuals vs predicted
+axes[0].scatter(y_pred_test, residuals, alpha=0.6)
+axes[0].axhline(0, color='red', linewidth=1)
+axes[0].set_xlabel('Predicted')
+axes[0].set_ylabel('Residual  (y − ŷ)')
+axes[0].set_title('Residuals vs Fitted')
+
+# Residual distribution
+axes[1].hist(residuals, bins=20, edgecolor='black')
+axes[1].set_xlabel('Residual')
+axes[1].set_ylabel('Count')
+axes[1].set_title('Residual Distribution')
+
+plt.tight_layout()
+plt.show()
+```
+
+A good model shows residuals that are:
+- Centred near zero (no systematic bias)
+- Roughly symmetric
+- Without obvious structure (no fan-shape or curve)
+
+## Ansatz Comparison
+
+| Ansatz | Params (4q, 3l) | Typical test R² |
+|--------|----------------|-----------------|
+| `BasicEntanglerLayers` | 12 | Moderate |
+| `StronglyEntanglingLayers` | 36 | Higher |
+| Basic + reuploading | 12 × layers | Highest (slower) |
+
+More parameters help — up to a point. On small datasets, overfitting is a risk even
+for quantum models.
+
+## Exercises
+
+1. Train the estimator on `make_regression` with 1 and 4 features. How does
+   increasing the feature count affect test R²? What circuit change is needed?
+
+2. Vary `x_angle_margin` from 0.1 to 0.9 in steps of 0.2. Plot test MSE vs margin.
+   Where is the sweet spot?
+
+3. Switch from `BasicEntanglerLayers` to `StronglyEntanglingLayers`. Does test R²
+   improve? How does training time change?
+
+4. Add data reuploading (with `diff_method='parameter-shift'`). Compare test MSE to
+   the single-encoding version after 200 epochs.
+
+5. Plot the residuals for train and test sets on the same figure. Is there evidence
+   of overfitting or underfitting?

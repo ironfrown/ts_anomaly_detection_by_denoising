@@ -1,0 +1,202 @@
+# Your First Quantum Regression Model
+
+This chapter builds a complete variational quantum circuit that learns to approximate
+$\sin(x)$. Along the way we compare three ansatz architectures and introduce the
+concept of data reuploading.
+
+## Problem Setup
+
+We want to learn a function $f : \mathbb{R} \to \mathbb{R}$ from noisy samples:
+
+$$y_i = \sin(x_i) + \varepsilon_i, \quad x_i \in [0, 2\pi]$$
+
+```python
+import numpy as np
+import pennylane as qml
+
+# Dataset
+n_samples = 50
+X = np.linspace(0, 2 * np.pi, n_samples)
+y = np.sin(X)
+```
+
+## Anatomy of a Variational QML Model
+
+Every variational model has three components:
+
+1. **Feature map** — encodes input $x$ into the circuit
+2. **Ansatz** — parameterised unitary $U(\boldsymbol{\theta})$
+3. **Measurement** — extracts a scalar prediction
+
+The model output is the expectation value of a Pauli-Z observable:
+
+$$\hat{y}(x; \boldsymbol{\theta}) = \langle 0 | U^\dagger(\boldsymbol{\theta})\, \phi^\dagger(x)\; Z_0\; \phi(x)\, U(\boldsymbol{\theta}) | 0 \rangle$$
+
+## Cost vs Loss
+
+Throughout this book we distinguish two related quantities:
+
+- **Loss** — the error on a single sample: $\ell_i = (\hat{y}_i - y_i)^2$
+- **Cost** — the aggregate error over the training set: $\mathcal{C}(\boldsymbol{\theta}) = \frac{1}{N}\sum_{i=1}^N \ell_i$
+
+Optimisation minimises the cost.
+
+## Model 1 — Basic Entangler (Simplest)
+
+```python
+n_qubits = 2
+n_layers  = 3
+dev = qml.device("lightning.qubit", wires=n_qubits)
+
+@qml.qnode(dev, diff_method='adjoint')
+def qnn_model_1(params, x):
+    # Feature map: encode scalar x onto qubit 0
+    qml.RY(x, wires=0)
+
+    # Ansatz: BasicEntanglerLayers
+    # params shape: (n_layers, n_qubits)
+    qml.BasicEntanglerLayers(params, wires=range(n_qubits), rotation=qml.RY)
+
+    # Measurement
+    return qml.expval(qml.PauliZ(0))
+```
+
+`BasicEntanglerLayers` applies one rotation per wire per layer, then a ring of CNOT
+gates. It requires `(n_layers, n_qubits)` parameters.
+
+### Training
+
+```python
+params = np.random.uniform(0, np.pi, size=(n_layers, n_qubits))
+optimizer = qml.AdamOptimizer(stepsize=0.05)
+
+def cost(params):
+    predictions = np.array([qnn_model_1(params, x) for x in X])
+    return np.mean((predictions - y) ** 2)
+
+for step in range(200):
+    params, c = optimizer.step_and_cost(cost, params)
+    if step % 50 == 0:
+        print(f"Step {step:3d} | Cost = {c:.4f}")
+```
+
+## Model 2 — Strong Entangler (More Expressive)
+
+`StronglyEntanglingLayers` adds three rotation angles per qubit per layer (RZ-RY-RZ
+decomposition) plus a more flexible entanglement pattern:
+
+```python
+@qml.qnode(dev, diff_method='adjoint')
+def qnn_model_2(params, x):
+    # Feature map: encode x onto all qubits
+    for wire in range(n_qubits):
+        qml.RY(x, wires=wire)
+
+    # Ansatz: StronglyEntanglingLayers
+    # params shape: (n_layers, n_qubits, 3)
+    qml.StronglyEntanglingLayers(params, wires=range(n_qubits))
+
+    return qml.expval(qml.PauliZ(0))
+
+params_2 = np.random.uniform(0, np.pi, size=(n_layers, n_qubits, 3))
+```
+
+The additional expressibility often improves fit quality, but increases parameter
+count by a factor of 3.
+
+## Model 3 — Data Reuploading (Most Expressive)
+
+Encoding data only once limits the model to functions that a single feature-map layer
+can represent. Reuploading breaks this limitation by re-injecting the input between
+ansatz layers:
+
+```python
+@qml.qnode(dev, diff_method='parameter-shift')  # adjoint incompatible with reuploading
+def qnn_model_3(params, x):
+    n_layers_local = params.shape[0] // n_qubits
+    for l in range(n_layers_local):
+        # Re-encode at each layer
+        for wire in range(n_qubits):
+            qml.RY(x, wires=wire)
+        # One layer of entangler
+        qml.BasicEntanglerLayers(
+            params[l * n_qubits:(l + 1) * n_qubits].reshape(1, n_qubits),
+            wires=range(n_qubits),
+            rotation=qml.RY
+        )
+    return qml.expval(qml.PauliZ(0))
+```
+
+::: {.callout-warning}
+`diff_method='adjoint'` is not compatible with mid-circuit encoding layers.
+Use `'parameter-shift'` instead. Training will be slower (two circuit evaluations
+per parameter per step).
+:::
+
+## Optimiser Comparison
+
+PennyLane provides several native optimisers:
+
+| Optimiser | Key property |
+|-----------|-------------|
+| `GradientDescentOptimizer` | Vanilla SGD; simple baseline |
+| `AdamOptimizer` | Adaptive learning rates; usually best default |
+| `RMSPropOptimizer` | Good for non-stationary objectives |
+| `NesterovMomentumOptimizer` | Look-ahead momentum |
+
+```python
+opt = qml.AdamOptimizer(stepsize=0.05)
+opt = qml.NesterovMomentumOptimizer(stepsize=0.01, momentum=0.9)
+```
+
+## Initialisation Matters
+
+The initial parameters strongly influence convergence:
+
+```python
+# Large random initialisation — risk of barren plateaus for deep circuits
+params = np.random.uniform(0, np.pi, ...)
+
+# Small initialisation — avoids large initial gradients
+params = np.random.uniform(0, 0.1, ...)
+
+# Near-zero — starts close to identity
+params = np.random.uniform(0, 0.01, ...)
+```
+
+For shallow circuits (1-2 layers, 2-4 qubits), random uniform $[0, \pi]$ works well.
+
+## Evaluating Fit Quality
+
+```python
+y_pred = np.array([qnn_model_1(params, x) for x in X])
+mse    = np.mean((y_pred - y) ** 2)
+print(f"MSE = {mse:.4f}")
+
+import matplotlib.pyplot as plt
+plt.plot(X, y,      label='sin(x)',    linewidth=2)
+plt.plot(X, y_pred, label='QNN fit',  linestyle='--')
+plt.legend(); plt.xlabel('x'); plt.ylabel('y')
+plt.title('Quantum Regression')
+plt.tight_layout()
+plt.show()
+```
+
+## Exercises
+
+1. Train Model 1 with a single qubit (`n_qubits=1`) and a single layer
+   (`n_layers=1`). Does it converge? Explain why or why not in terms of the
+   model's expressibility.
+
+2. Change the feature encoding from `qml.RY` to `qml.RX` in Model 1. Does the
+   fit quality change for $\sin(x)$? Why might one rotation axis work better than
+   another for a particular function?
+
+3. Fit the harder dataset $y = \sin(0.7x + 0.5\pi)$ using Models 1 and 3. Which
+   model achieves lower MSE? How many training steps does each need?
+
+4. Plot the training cost curve for all three models on the same axes. Which model
+   converges fastest? Which achieves the lowest final cost?
+
+5. Use `qml.draw_mpl` to visualise all three circuits. Count the trainable parameters
+   in each. What is the parameter-to-MSE trade-off?

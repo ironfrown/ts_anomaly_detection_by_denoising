@@ -1,0 +1,72 @@
+project:
+  type: book
+  output-dir: _book
+
+book:
+  title: "Quantum Machine Learning: A Practical Introduction"
+  subtitle: "From Quantum Circuits to Hybrid Neural Networks"
+  author:
+    - name: Jacob Cybulski
+      affiliation: Enquanted
+    - name: Sebastian Zając
+  date: "2026"
+  date-format: "YYYY"
+  repo-url: https://github.com/ironfrown/qml_workshop_intro_v3
+  repo-actions: [edit, issue]
+  downloads: [pdf]
+  search: true
+  license: "GPL-3.0"
+
+  chapters:
+    - index.qmd
+    - part: "Part I: Foundations"
+      chapters:
+        - part1/ch01_qml_pennylane.qmd
+        - part1/ch02_data_encoding.qmd
+        - part1/ch03_hybrid_skeleton.qmd
+    - part: "Part II: Practical Models"
+      chapters:
+        - part2/ch04_first_regression.qmd
+        - part2/ch05_quantum_estimator.qmd
+        - part2/ch06_quantum_classifier.qmd
+        - part2/ch07_classical_baseline.qmd
+    - part: "Part III: Advanced Topics"
+      chapters:
+        - part3/ch08_hybrid_logistic.qmd
+        - part3/ch09_qae_pure.qmd
+        - part3/ch10_qae_hybrid.qmd
+    - part: "Appendices"
+      chapters:
+        - appendix/app_a_api_reference.qmd
+        - appendix/app_b_math.qmd
+        - appendix/app_c_datasets.qmd
+    - references.qmd
+
+bibliography: references.bib
+
+format:
+  html:
+    theme: cosmo
+    code-fold: false
+    code-tools: true
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    highlight-style: github
+  pdf:
+    documentclass: book
+    classoption: [oneside]
+    geometry:
+      - top=25mm
+      - bottom=25mm
+      - left=30mm
+      - right=25mm
+    fontsize: 11pt
+    number-sections: true
+    colorlinks: true
+
+execute:
+  freeze: auto
+  echo: true
+  warning: false
+  cache: true

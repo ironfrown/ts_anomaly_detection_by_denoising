@@ -1,0 +1,204 @@
+# Quantum Classifier
+
+This chapter builds a binary quantum classifier using PyTorch and PennyLane together,
+applied to the UCI Automobile dataset. The same dataset is used in the next chapter
+for a classical baseline, enabling a head-to-head comparison.
+
+## Dataset: Automobile Insurance Risk
+
+The UCI Automobile dataset contains technical specifications of cars alongside a
+symbolic risk rating (`symboling`) that reflects insurance risk. We convert this into
+a binary target:
+
+| Risk | Label |
+|------|-------|
+| $\leq 0$ (safe) | 0 |
+| $> 0$ (risky) | 1 |
+
+```python
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+
+df = pd.read_csv('../data/Automobile.csv')
+
+# Keep numeric columns, drop rows with missing values
+df_num = df.select_dtypes(include=[np.number]).dropna()
+
+# Binary target
+y = (df_num['symboling'] > 0).astype(float).values
+
+# Features: all numeric columns except target
+X_raw = df_num.drop(columns=['symboling']).values
+```
+
+## Dimensionality Reduction
+
+The dataset has ~13 numeric features but our quantum circuit supports only
+`n_qubits` features. We use PCA to reduce:
+
+```python
+from sklearn.decomposition import PCA
+
+n_qubits = 4
+pca = PCA(n_components=n_qubits, random_state=42)
+X_pca = pca.fit_transform(X_raw)
+
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X_pca)
+```
+
+Alternatives to PCA:
+
+- **SelectKBest with χ²** — selects the $k$ most informative features (requires
+  non-negative inputs after shifting)
+- **Manual selection** — domain knowledge about which car specs predict risk
+
+## The Quantum Circuit
+
+```python
+import pennylane as qml
+import torch
+import torch.nn as nn
+
+dev = qml.device("default.qubit", wires=n_qubits)
+n_layers = 3
+
+@qml.qnode(dev, interface="torch", diff_method="adjoint")
+def quantum_circuit(inputs, weights):
+    # inputs:  shape (n_qubits,)  — one feature per qubit
+    # weights: shape (n_layers, n_qubits, 3)
+    qml.AngleEmbedding(inputs, wires=range(n_qubits), rotation='Y')
+    qml.StronglyEntanglingLayers(weights, wires=range(n_qubits))
+    return qml.expval(qml.PauliZ(0))   # scalar in [-1, +1]
+```
+
+## Quantum Classifier Model
+
+```python
+class QuantumClassifier(nn.Module):
+    def __init__(self, n_qubits, n_layers):
+        super().__init__()
+
+        # Quantum layer
+        weight_shapes = {"weights": (n_layers, n_qubits, 3)}
+        self.quantum = qml.qnn.TorchLayer(quantum_circuit, weight_shapes)
+
+        # Classical head: maps quantum scalar → logit
+        self.classical = nn.Sequential(
+            nn.Linear(1, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1)
+        )
+
+    def forward(self, x):
+        # x: shape (batch, n_qubits)
+        q_out = self.quantum(x).float().unsqueeze(-1)  # (batch, 1)
+        return self.classical(q_out)                    # (batch, 1)  — logit
+```
+
+The quantum layer outputs a scalar per sample; the classical head maps it to a
+binary logit. Using `BCEWithLogitsLoss` (which applies sigmoid internally) is
+numerically more stable than applying sigmoid manually.
+
+## Training
+
+```python
+# Torch tensors
+X_tensor = torch.tensor(X_scaled, dtype=torch.float32)
+y_tensor  = torch.tensor(y,        dtype=torch.float32).unsqueeze(-1)
+
+# Train/test split
+from sklearn.model_selection import train_test_split
+idx = list(range(len(X_tensor)))
+train_idx, test_idx = train_test_split(idx, test_size=0.2, random_state=42)
+
+X_train = X_tensor[train_idx]; y_train = y_tensor[train_idx]
+X_test  = X_tensor[test_idx];  y_test  = y_tensor[test_idx]
+
+# Model
+model     = QuantumClassifier(n_qubits, n_layers)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+loss_fn   = nn.BCEWithLogitsLoss()
+
+# Training loop
+for epoch in range(100):
+    model.train()
+    optimizer.zero_grad()
+    logits = model(X_train)
+    loss   = loss_fn(logits, y_train)
+    loss.backward()
+    optimizer.step()
+
+    if epoch % 20 == 0:
+        model.eval()
+        with torch.no_grad():
+            val_logits = model(X_test)
+            val_loss   = loss_fn(val_logits, y_test)
+        print(f"Epoch {epoch:3d} | Train={loss.item():.4f} | Val={val_loss.item():.4f}")
+```
+
+## Evaluation
+
+```python
+model.eval()
+with torch.no_grad():
+    test_logits = model(X_test)
+    probs = torch.sigmoid(test_logits)
+    preds = (probs > 0.5).float()
+
+from sklearn.metrics import accuracy_score, classification_report
+
+acc = accuracy_score(y_test.numpy(), preds.numpy())
+print(f"Test accuracy: {acc:.4f}")
+print(classification_report(y_test.numpy(), preds.numpy(),
+                             target_names=['Safe', 'Risky']))
+```
+
+## Making Predictions on New Data
+
+```python
+fantasy_car = np.array([
+    2500,   # curb-weight (kg)
+    190,    # horsepower
+    4.5,    # length (m)
+    120,    # city-mpg
+])
+x_new = scaler.transform(pca.transform([fantasy_car]))
+x_tensor = torch.tensor(x_new, dtype=torch.float32)
+
+model.eval()
+with torch.no_grad():
+    prob = torch.sigmoid(model(x_tensor)).item()
+print(f"Risk probability: {prob:.2%}")
+```
+
+## Key Design Choices
+
+**Dimensionality reduction strategy.** PCA captures maximum variance but may discard
+class-discriminative information. Chi-squared feature selection preserves
+interpretability. Neither is universally superior.
+
+**Data shuffling.** Always shuffle before splitting. The Automobile dataset is ordered
+by risk category, so a non-shuffled split creates biased train/test sets.
+
+**Quantum vs classical head.** The classical `nn.Sequential` head after the quantum
+layer is essential: `expval` outputs are in $[-1, +1]$ with non-linear quantum
+features, and the linear head transforms this into a calibrated logit.
+
+## Exercises
+
+1. Replace PCA with `SelectKBest(chi2, k=n_qubits)`. Shift features to be
+   non-negative first. Does accuracy improve?
+
+2. Remove the classical head (directly apply sigmoid to the quantum output). How
+   does accuracy change? What does this tell you about the role of the head?
+
+3. Increase `n_qubits` to 6 and `n_layers` to 4. Does test accuracy improve?
+   What happens to training time?
+
+4. Plot the ROC curve for the quantum classifier. What is the AUC?
+
+5. Retrain the model 5 times with different random seeds. Report mean and standard
+   deviation of test accuracy. How stable is quantum training?

@@ -1,0 +1,200 @@
+# Hybrid Quantum-Classical Logistic Regression
+
+Logistic regression is the canonical binary classifier: it outputs a probability
+$\hat{p} \in [0, 1]$ via a sigmoid transformation of a linear score. In this chapter
+we replace the linear score with a variational quantum circuit, producing a *quantum
+logistic regression* model.
+
+## From Linear to Quantum Score
+
+Classical logistic regression:
+
+$$\hat{p} = \sigma(\mathbf{w}^\top \mathbf{x} + b), \quad \sigma(z) = \frac{1}{1 + e^{-z}}$$
+
+Quantum logistic regression:
+
+$$\hat{p} = \sigma\!\left(\langle Z_0 \rangle_{\boldsymbol{\theta}}(\mathbf{x})\right)$$
+
+where $\langle Z_0 \rangle_{\boldsymbol{\theta}}(\mathbf{x})$ is the PauliZ expectation
+value of the circuit parameterised by $\boldsymbol{\theta}$ with input $\mathbf{x}$.
+
+## Binary Cross-Entropy Loss
+
+Logistic regression minimises the **Binary Cross-Entropy (BCE)** loss:
+
+$$\mathcal{L}(\boldsymbol{\theta}) = -\frac{1}{N}\sum_{i=1}^{N}\left[y_i \log \hat{p}_i + (1 - y_i)\log(1 - \hat{p}_i)\right]$$
+
+Compared to MSE, BCE is:
+- Convex in the sigmoid output (favourable optimisation landscape)
+- Properly calibrated for probability outputs
+- Heavily penalising confident wrong predictions
+
+## The Quantum Circuit
+
+```python
+import pennylane as qml
+import torch
+import torch.nn as nn
+
+n_qubits = 4
+n_layers  = 3
+dev = qml.device("lightning.qubit", wires=n_qubits)
+
+@qml.qnode(dev, interface="torch", diff_method="adjoint")
+def quantum_circuit(inputs, weights):
+    # inputs:  (n_qubits,) — pre-normalised features
+    # weights: (n_layers, n_qubits, 3)
+    qml.AngleEmbedding(inputs, wires=range(n_qubits), rotation='Y')
+    qml.StronglyEntanglingLayers(weights, wires=range(n_qubits))
+    return qml.expval(qml.PauliZ(0))   # ∈ [-1, +1]
+```
+
+## Model: `expval` Path
+
+The simplest design applies sigmoid directly to the quantum output:
+
+```python
+class QuantumLogisticRegression(nn.Module):
+    def __init__(self, n_qubits, n_layers):
+        super().__init__()
+        weight_shapes = {"weights": (n_layers, n_qubits, 3)}
+        self.quantum  = qml.qnn.TorchLayer(quantum_circuit, weight_shapes)
+        self.sigmoid  = nn.Sigmoid()
+
+    def forward(self, x):
+        # x: (batch, n_qubits)
+        q_out = self.quantum(x).float()          # (batch,)  ∈ [-1, +1]
+        return self.sigmoid(q_out).unsqueeze(-1) # (batch, 1) ∈ [0, 1]
+```
+
+Use `BCELoss` (not `BCEWithLogitsLoss`) when sigmoid is applied explicitly:
+
+```python
+loss_fn = nn.BCELoss()
+```
+
+## Model: `probs` Path (Alternative)
+
+Instead of mapping $[-1, +1]$ through sigmoid, we can directly read the probability
+of measuring $|1\rangle$:
+
+```python
+@qml.qnode(dev, interface="torch", diff_method="adjoint")
+def circuit_probs(inputs, weights):
+    qml.AngleEmbedding(inputs, wires=range(n_qubits), rotation='Y')
+    qml.StronglyEntanglingLayers(weights, wires=range(n_qubits))
+    return qml.probs(wires=0)   # [P(|0⟩), P(|1⟩)]  — already in [0, 1]
+
+class QuantumLogisticProbs(nn.Module):
+    def __init__(self, n_qubits, n_layers):
+        super().__init__()
+        weight_shapes = {"weights": (n_layers, n_qubits, 3)}
+        self.quantum  = qml.qnn.TorchLayer(circuit_probs, weight_shapes)
+
+    def forward(self, x):
+        probs = self.quantum(x)          # (batch, 2)
+        return probs[:, 1].unsqueeze(-1) # P(|1⟩): (batch, 1)
+```
+
+This avoids the sigmoid entirely — the model directly outputs a quantum probability.
+
+::: {.callout-note}
+The `probs` path is conceptually cleaner but may have a flatter training landscape
+because probabilities are bounded in $[0, 1]$ from the start. The `expval` + sigmoid
+path gives the optimiser more signal in the early training phase.
+:::
+
+## Training
+
+```python
+model     = QuantumLogisticRegression(n_qubits, n_layers)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+loss_fn   = nn.BCELoss()
+
+for epoch in range(150):
+    model.train()
+    optimizer.zero_grad()
+    p_hat = model(X_train)
+    loss  = loss_fn(p_hat, y_train)
+    loss.backward()
+    optimizer.step()
+```
+
+## Adding a Classical Booster Layer
+
+When the quantum circuit alone struggles, a small classical layer can help:
+
+```python
+class HybridLogistic(nn.Module):
+    def __init__(self, n_qubits, n_layers, use_booster=False):
+        super().__init__()
+        weight_shapes = {"weights": (n_layers, n_qubits, 3)}
+        self.quantum  = qml.qnn.TorchLayer(quantum_circuit, weight_shapes)
+        self.use_booster = use_booster
+
+        if use_booster:
+            # Thin classical booster
+            self.booster = nn.Sequential(
+                nn.Linear(1, 32),
+                nn.ReLU(),
+                nn.Linear(32, 1),
+                nn.Sigmoid()
+            )
+        else:
+            self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        q = self.quantum(x).float().unsqueeze(-1)   # (batch, 1)
+        if self.use_booster:
+            return self.booster(q)
+        return self.sigmoid(q)
+```
+
+The booster adds 65 parameters and can substantially improve accuracy when the raw
+quantum score is not linearly separable from the target.
+
+## LBFGS Optimiser (Advanced)
+
+L-BFGS is a quasi-Newton second-order method that can converge much faster than Adam
+on low-parameter problems. PyTorch requires a closure:
+
+```python
+optimizer_lbfgs = torch.optim.LBFGS(
+    model.parameters(),
+    lr=0.5,
+    max_iter=20,
+    history_size=10
+)
+
+def closure():
+    optimizer_lbfgs.zero_grad()
+    p_hat = model(X_train)
+    loss  = loss_fn(p_hat, y_train)
+    loss.backward()
+    return loss
+
+for epoch in range(50):
+    loss = optimizer_lbfgs.step(closure)
+    print(f"Epoch {epoch:2d} | Loss = {loss.item():.4f}")
+```
+
+L-BFGS typically converges in 20–50 iterations vs 100–200 for Adam, but each
+iteration is more expensive.
+
+## Exercises
+
+1. Train the `expval` model and the `probs` model on the Automobile dataset. Compare
+   test accuracy and AUC. Which converges faster?
+
+2. Enable `use_booster=True`. Does the booster help more on the `expval` or `probs`
+   path?
+
+3. Replace `StronglyEntanglingLayers` with `BasicEntanglerLayers`. Does BCE loss
+   still converge? Does accuracy change?
+
+4. Switch from Adam to LBFGS. How many epochs does LBFGS need to reach the same
+   loss that Adam achieves in 100 epochs?
+
+5. Plot the predicted probability $\hat{p}$ against the true label for the test set.
+   Is the model well-calibrated (are samples with $\hat{p} \approx 0.7$ correct
+   about 70% of the time)?

@@ -1,0 +1,86 @@
+# Preface {.unnumbered}
+
+This book is a companion to the *QML Workshop Intro* — a hands-on introduction to
+Quantum Machine Learning (QML) developed for the QPoland and QAIF communities.
+
+## What This Book Is About
+
+Quantum Machine Learning sits at the intersection of quantum computing and classical
+machine learning. Rather than surveying the theoretical landscape, this book takes a
+**practice-first** approach: every concept is introduced through working Python code
+using [PennyLane](https://pennylane.ai) and [PyTorch](https://pytorch.org).
+
+By the end you will be able to:
+
+- Build and train variational quantum circuits for regression and classification
+- Connect quantum circuits to PyTorch's autograd engine via `qml.qnn.TorchLayer`
+- Understand the key design choices: data encoding strategy, ansatz architecture,
+  measurement type, and optimizer
+- Implement a Quantum Autoencoder (QAE) for time-series denoising
+
+## Prerequisites
+
+| Topic | Required level |
+|-------|---------------|
+| Python | Comfortable with NumPy, functions, classes |
+| Machine learning | Knows loss functions, gradient descent, train/test split |
+| Linear algebra | Vectors, matrix multiplication, inner products |
+| Quantum computing | *None required* — introduced from scratch |
+
+## Software Setup
+
+All code runs on Python 3.11+ with a virtual environment:
+
+```bash
+python3.11 -m venv qml_venv
+source qml_venv/bin/activate       # macOS / Linux
+# .\qml_venv\Scripts\activate      # Windows
+pip install -r requirements.txt
+```
+
+Key packages used throughout:
+
+| Package | Version | Role |
+|---------|---------|------|
+| `pennylane` | 0.42.3 | Quantum circuit definition and differentiation |
+| `pennylane-lightning` | 0.42.0 | Fast CPU/GPU simulator |
+| `torch` | 2.8.0 | Automatic differentiation, hybrid layers |
+| `scikit-learn` | 1.7.2 | Datasets, preprocessing, metrics |
+| `matplotlib` | 3.10.6 | Visualization |
+
+## How This Book Is Organised
+
+**Part I — Foundations** covers quantum circuits, data encoding strategies, and the
+anatomy of a hybrid model. This material corresponds to the self-study *Explore*
+sessions of the workshop and can be read at your own pace.
+
+**Part II — Practical Models** builds three complete models: a quantum regressor, a
+quantum estimator for real datasets, and a quantum classifier compared against a
+classical baseline.
+
+**Part III — Advanced Topics** introduces hybrid quantum-classical logistic regression
+and two variants of the Quantum Autoencoder for time-series denoising.
+
+**Appendices** provide a PennyLane API reference, a mathematical notation guide, and
+dataset descriptions.
+
+## Notation Conventions
+
+Throughout the book we use Dirac notation:
+
+- $|0\rangle, |1\rangle$ — computational basis states
+- $|\psi\rangle$ — general quantum state
+- $\langle \psi | \phi \rangle$ — inner product
+- $\hat{O}$ — observable operator
+- $\langle \hat{O} \rangle$ — expectation value
+
+Code comments follow the pattern `# Compute ρ = |ψ⟩⟨ψ|` to connect math and code.
+
+## Source Material
+
+This book is derived from workshop notebooks originally authored by Jacob Cybulski
+(Enquanted), Tomasz Rybotycki, Sebastian Zając, and Paweł Gora, and released under
+the [GNU GPL v3](https://www.gnu.org/licenses/gpl-3.0.html) licence.
+
+The original notebooks are available at:
+<https://github.com/ironfrown/qml_workshop_intro_v3>

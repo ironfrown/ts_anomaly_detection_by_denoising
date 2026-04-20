@@ -1,0 +1,232 @@
+# Quantum Autoencoder: Pure PennyLane
+
+A *Quantum Autoencoder* (QAE) compresses a quantum state to fewer qubits and
+reconstructs it, analogous to a classical autoencoder but operating in Hilbert space.
+This chapter implements a QAE for time-series denoising using only PennyLane.
+
+## The Problem: Denoising Time Series
+
+We use the **Mackey-Glass equation** — a nonlinear delay-differential equation widely
+used to benchmark time-series models:
+
+$$\frac{dx(t)}{dt} = \frac{\beta\, x(t-\tau)}{1 + x(t-\tau)^n} - \gamma\, x(t)$$
+
+with typical parameters $\beta = 0.2$, $\tau = 17$, $n = 10$, $\gamma = 0.1$.
+The system exhibits complex quasi-chaotic dynamics for large $\tau$.
+
+```python
+# Mackey-Glass generator (simplified Euler integration)
+def mackey_glass(n_samples, tau=17, beta=0.2, gamma=0.1, n=10, dt=1.0, seed=42):
+    np.random.seed(seed)
+    history = np.ones(tau + 1) * 0.9
+    x = list(history)
+    for _ in range(n_samples):
+        x_tau = x[-tau]
+        dx = beta * x_tau / (1 + x_tau**n) - gamma * x[-1]
+        x.append(x[-1] + dt * dx)
+    return np.array(x[tau:])
+
+ts_clean = mackey_glass(n_samples=1000)
+```
+
+Noise is added for denoising experiments:
+
+```python
+def add_noise(ts, noise_level=0.05):
+    return ts + np.random.normal(0, noise_level * ts.std(), size=ts.shape)
+
+ts_noisy = add_noise(ts_clean, noise_level=0.1)
+```
+
+## Sliding Windows
+
+Raw time series must be segmented into fixed-length windows for batch processing:
+
+```python
+def sliding_windows(ts, window_size):
+    """Returns array of shape (n_windows, window_size)."""
+    return np.array([ts[i:i+window_size] for i in range(len(ts) - window_size)])
+
+window_size = 4          # matches n_qubits (angle encoding)
+X_windows   = sliding_windows(ts_noisy, window_size)   # (n_windows, 4)
+y_windows   = sliding_windows(ts_clean, window_size)   # (n_windows, 4)
+```
+
+## QAE Architecture
+
+A QAE has three stages:
+
+```
+Input state |ψ_input⟩  (n qubits)
+        │
+        ▼
+  ┌─────────────┐
+  │   Encoder   │   n_qubits → n_latent qubits
+  └─────────────┘
+        │                │
+  Latent qubits    Trash qubits
+  (preserved)     (measured, reset to |0⟩)
+        │
+        ▼
+  ┌─────────────┐
+  │   Decoder   │   n_latent → n_qubits  (mirror of encoder)
+  └─────────────┘
+        │
+        ▼
+Reconstructed state |ψ_output⟩
+```
+
+The loss measures the distance between the input and output states. The ideal loss
+is the **trash qubit fidelity**: if all information is captured in the latent space,
+the trash qubits should be in $|0\rangle$ after the encoder.
+
+## SWAP Test for State Comparison
+
+The **SWAP test** computes the inner product $|\langle\psi|\phi\rangle|^2$ without
+collapsing either state:
+
+```
+Ancilla  |0⟩ ─── H ─── CSWAP ─── H ─── measure
+State 1  |ψ⟩ ─────────────────────────────────
+State 2  |φ⟩ ─────────────────────────────────
+
+P(ancilla = |0⟩) = (1 + |⟨ψ|φ⟩|²) / 2
+```
+
+$$\text{Fidelity} = |\langle\psi|\phi\rangle|^2 = 2 P(|0\rangle_\text{ancilla}) - 1$$
+
+```python
+n_qubits = 4
+n_latent  = 2                          # compressed representation
+n_trash   = n_qubits - n_latent        # = 2
+dev_swap  = qml.device("default.qubit", wires=2 * n_qubits + 1)  # +1 ancilla
+
+@qml.qnode(dev_swap)
+def swap_test(state_1, state_2):
+    """Measure fidelity between two n-qubit states."""
+    # Ancilla qubit: index 0
+    qml.Hadamard(wires=0)
+    # Prepare state_1 on qubits 1..n_qubits
+    qml.AmplitudeEmbedding(state_1, wires=range(1, n_qubits + 1), normalize=True)
+    # Prepare state_2 on qubits n_qubits+1..2*n_qubits
+    qml.AmplitudeEmbedding(state_2, wires=range(n_qubits + 1, 2*n_qubits + 1), normalize=True)
+    # CSWAP controlled on ancilla
+    for i in range(n_qubits):
+        qml.CSWAP(wires=[0, i + 1, n_qubits + i + 1])
+    qml.Hadamard(wires=0)
+    return qml.probs(wires=0)    # [P(|0⟩), P(|1⟩)]
+
+def fidelity(s1, s2):
+    probs = swap_test(s1, s2)
+    return 2 * probs[0] - 1     # ∈ [0, 1]
+```
+
+## QAE Circuit
+
+```python
+dev_qae = qml.device("lightning.qubit", wires=n_qubits)
+
+@qml.qnode(dev_qae, diff_method="adjoint")
+def qae_circuit(params, x):
+    """
+    params: (n_layers, n_qubits, 3)  — shared encoder + decoder
+    x:      (n_qubits,)              — normalised input window
+    """
+    # Data encoding
+    qml.AngleEmbedding(x, wires=range(n_qubits), rotation='Y')
+
+    # Encoder: compress to n_latent qubits
+    qml.StronglyEntanglingLayers(params, wires=range(n_qubits))
+
+    # Trash: reset n_trash qubits (simulate loss of information)
+    for wire in range(n_latent, n_qubits):
+        qml.measure(wire)            # collapse → classical bit
+        # In simulation: we measure but cannot reset; use adjoint trick instead
+
+    # Decoder: mirror (adjoint) of encoder
+    qml.adjoint(qml.StronglyEntanglingLayers)(params, wires=range(n_qubits))
+
+    return qml.expval(qml.PauliZ(0))
+```
+
+::: {.callout-note}
+Resetting mid-circuit qubits requires hardware or the `lightning.qubit` plugin with
+dynamic circuits enabled. In practice, the loss function is designed to *incentivise*
+the trash qubits to end up near $|0\rangle$, which achieves the same effect.
+:::
+
+## Loss Function
+
+We minimise the expected value of the trash qubit observable (encouraging $|0\rangle$):
+
+$$\mathcal{L}(\boldsymbol{\theta}) = -\frac{1}{N}\sum_{i=1}^N \sum_{j \in \text{trash}} \langle Z_j \rangle(\mathbf{x}_i, \boldsymbol{\theta})$$
+
+$\langle Z_j \rangle = +1$ when qubit $j$ is in $|0\rangle$, so minimising
+$-\langle Z_j \rangle$ pushes the trash qubits toward $|0\rangle$.
+
+## Training Loop
+
+```python
+params = np.random.uniform(-np.pi, np.pi, size=(n_layers, n_qubits, 3))
+optimizer = qml.AdamOptimizer(stepsize=0.02)
+
+def cost(params, X_batch):
+    losses = []
+    for x in X_batch:
+        # Measure trash qubits
+        trash_expvals = [qae_circuit(params, x) for _ in range(n_trash)]
+        losses.append(-np.mean(trash_expvals))
+    return np.mean(losses)
+
+n_epochs  = 200
+batch_size = 16
+
+for epoch in range(n_epochs):
+    batch_idx = np.random.choice(len(X_windows), batch_size, replace=False)
+    X_batch   = X_windows[batch_idx]
+    params, c = optimizer.step_and_cost(lambda p: cost(p, X_batch), params)
+    if epoch % 50 == 0:
+        print(f"Epoch {epoch:3d} | Cost = {c:.4f}")
+```
+
+## Evaluation
+
+```python
+# Reconstruct test windows and compare to clean signal
+def reconstruct(params, X_noisy):
+    reconstructed = []
+    for x in X_noisy:
+        # Forward pass through encoder+decoder
+        x_norm = x / np.linalg.norm(x)
+        output = qae_circuit(params, x_norm)
+        reconstructed.append(output)
+    return np.array(reconstructed)
+
+X_test_windows = sliding_windows(ts_noisy[-200:], window_size)
+y_test_windows = sliding_windows(ts_clean[-200:], window_size)
+
+y_hat   = reconstruct(params, X_test_windows)
+mse_qae = np.mean((y_hat - y_test_windows[:, 0]) ** 2)
+mse_raw = np.mean((X_test_windows[:, 0] - y_test_windows[:, 0]) ** 2)
+
+print(f"Noisy input MSE: {mse_raw:.4f}")
+print(f"QAE output MSE:  {mse_qae:.4f}")
+print(f"SNR improvement: {10 * np.log10(mse_raw / mse_qae):.1f} dB")
+```
+
+## Exercises
+
+1. Vary `n_latent` from 1 to `n_qubits - 1`. How does compression ratio affect
+   reconstruction MSE?
+
+2. Replace the Mackey-Glass series with a noisy sine wave. Does the QAE denoise it
+   more or less effectively? Why might it differ?
+
+3. Run 9 independent training instances with different random seeds. Report the
+   distribution of final costs. How much variance is there in quantum training?
+
+4. Compare training with `diff_method='adjoint'` vs `'parameter-shift'`. How much
+   slower is parameter-shift? When would you prefer it?
+
+5. Implement the SWAP test fidelity as the loss (instead of the trash qubit
+   approach). Does it converge? Which loss is easier to optimise?

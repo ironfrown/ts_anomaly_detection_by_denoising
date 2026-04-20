@@ -1,0 +1,147 @@
+# PennyLane API Reference {#sec-api-reference}
+
+Quick reference for the PennyLane APIs used in this book. See the official
+documentation at <https://docs.pennylane.ai> for full details.
+
+## Devices
+
+```python
+qml.device("default.qubit",    wires=n)   # Pure Python simulator
+qml.device("lightning.qubit",  wires=n)   # C++ simulator (fast)
+qml.device("lightning.gpu",    wires=n)   # GPU simulator (requires CUDA)
+```
+
+## QNode Decorator
+
+```python
+@qml.qnode(dev, diff_method='adjoint')    # fastest for most circuits
+@qml.qnode(dev, diff_method='parameter-shift')  # required for reuploading
+@qml.qnode(dev, interface='torch')        # enables PyTorch autograd
+```
+
+| `diff_method` | Speed | Supports reuploading |
+|--------------|-------|----------------------|
+| `'adjoint'` | Fast | No |
+| `'parameter-shift'` | Slow (2 evals/param) | Yes |
+| `'backprop'` | Fast (requires `default.qubit`) | Yes |
+
+## Single-Qubit Gates
+
+| Gate | PennyLane | Matrix |
+|------|-----------|--------|
+| Pauli-X (NOT) | `qml.PauliX(wire)` | $\begin{pmatrix}0&1\\1&0\end{pmatrix}$ |
+| Pauli-Y | `qml.PauliY(wire)` | $\begin{pmatrix}0&-i\\i&0\end{pmatrix}$ |
+| Pauli-Z | `qml.PauliZ(wire)` | $\begin{pmatrix}1&0\\0&-1\end{pmatrix}$ |
+| Hadamard | `qml.Hadamard(wire)` | $\frac{1}{\sqrt{2}}\begin{pmatrix}1&1\\1&-1\end{pmatrix}$ |
+| $R_X(\theta)$ | `qml.RX(theta, wire)` | $e^{-i\theta X/2}$ |
+| $R_Y(\theta)$ | `qml.RY(theta, wire)` | $e^{-i\theta Y/2}$ |
+| $R_Z(\theta)$ | `qml.RZ(theta, wire)` | $e^{-i\theta Z/2}$ |
+
+## Two-Qubit Gates
+
+```python
+qml.CNOT(wires=[control, target])
+qml.CZ(wires=[control, target])
+qml.SWAP(wires=[wire0, wire1])
+qml.CRY(theta, wires=[control, target])
+qml.CSWAP(wires=[control, wire0, wire1])   # Fredkin gate
+```
+
+## Data Encoding
+
+```python
+qml.AngleEmbedding(features, wires, rotation='Y')
+# features: (n_qubits,) — one angle per qubit
+
+qml.AmplitudeEmbedding(features, wires, normalize=True)
+# features: (2^n_qubits,) — full amplitude vector
+
+qml.BasisEmbedding(features, wires)
+# features: binary list/array of length n_qubits
+```
+
+## Ansatz Templates
+
+```python
+qml.BasicEntanglerLayers(weights, wires, rotation=qml.RY)
+# weights shape: (n_layers, n_wires)
+
+qml.StronglyEntanglingLayers(weights, wires)
+# weights shape: (n_layers, n_wires, 3)
+```
+
+## Measurements
+
+```python
+qml.probs(wires)          # probability vector, shape (2^n,)
+qml.expval(observable)    # scalar ∈ [-1, +1]
+qml.state()               # full statevector, shape (2^n,)
+qml.sample(observable)    # raw samples
+```
+
+Common observables:
+```python
+qml.PauliZ(wire)
+qml.PauliX(wire)
+qml.Hermitian(matrix, wires)
+```
+
+## Visualisation
+
+```python
+print(qml.draw(circuit)(args))          # ASCII diagram
+qml.draw_mpl(circuit)(args)             # matplotlib figure
+qml.draw_mpl(circuit, decimals=2)(args) # rounded parameter values
+```
+
+## Differentiation
+
+```python
+# Gradient of scalar-output circuit
+grad_fn = qml.grad(circuit)
+grads   = grad_fn(params, x)
+
+# Jacobian for vector-output circuit
+jac = qml.jacobian(circuit)(params)
+
+# Adjoint of a unitary template
+qml.adjoint(qml.StronglyEntanglingLayers)(weights, wires=wires)
+```
+
+## PyTorch Integration
+
+```python
+# 1. QNode with torch interface
+@qml.qnode(dev, interface="torch", diff_method="adjoint")
+def circuit(inputs, weights):
+    ...
+
+# 2. Wrap as nn.Module layer
+weight_shapes = {"weights": (n_layers, n_qubits, 3)}
+layer = qml.qnn.TorchLayer(circuit, weight_shapes)
+
+# 3. Use in nn.Module
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.q = layer
+        self.out = nn.Linear(1, 1)
+
+    def forward(self, x):
+        return self.out(self.q(x).float().unsqueeze(-1))
+```
+
+## Native Optimisers (PennyLane only)
+
+```python
+opt = qml.AdamOptimizer(stepsize=0.05)
+opt = qml.GradientDescentOptimizer(stepsize=0.01)
+opt = qml.RMSPropOptimizer(stepsize=0.01)
+opt = qml.NesterovMomentumOptimizer(stepsize=0.01, momentum=0.9)
+
+# One step
+params = opt.step(cost_fn, params)
+
+# One step + cost value
+params, cost_val = opt.step_and_cost(cost_fn, params)
+```
